@@ -1100,10 +1100,10 @@ func TestProcessInteractiveEvents_NonTerminalResultContinuesTurn(t *testing.T) {
 	session := e.sessions.GetOrCreateActive(sessionKey)
 	agentSession := newControllableSession("s1")
 	state := &interactiveState{
-		agentSession:                  agentSession,
-		platform:                      p,
-		replyCtx:                      "ctx-1",
-		currentTurnUserMessageTimeMs:  100,
+		agentSession:                   agentSession,
+		platform:                       p,
+		replyCtx:                       "ctx-1",
+		currentTurnUserMessageTimeMs:   100,
 		lastCompletedUserMessageTimeMs: 0,
 	}
 	e.interactiveStates[sessionKey] = state
@@ -9144,6 +9144,105 @@ func TestQueueMessage_NilAgentSession_DuringStartup(t *testing.T) {
 	state.mu.Unlock()
 }
 
+func TestBusyInputModeInterruptStopsCurrentSessionWithoutQueueing(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	running := newControllableSession("running")
+	next := newControllableSession("next")
+	startCalls := 0
+	agent := &controllableAgent{
+		startSessionFn: func(_ context.Context, _ string) (AgentSession, error) {
+			startCalls++
+			if startCalls == 1 {
+				return running, nil
+			}
+			return next, nil
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetBusyInputMode(BusyInputModeInterrupt)
+
+	key := "test:interrupt-user"
+	firstSession := e.sessions.GetOrCreateActive(key)
+	if !firstSession.TryLock() {
+		t.Fatal("expected to lock first session")
+	}
+
+	doneFirst := make(chan struct{})
+	go func() {
+		defer close(doneFirst)
+		e.processInteractiveMessageWith(p, &Message{
+			SessionKey: key,
+			MessageID:  "m1",
+			UserID:     "u1",
+			UserName:   "User",
+			Platform:   "test",
+			Content:    "long running task",
+			ReplyCtx:   "ctx-1",
+		}, firstSession, agent, e.sessions, key, "", key)
+	}()
+
+	select {
+	case <-time.After(2 * time.Second):
+		// Expected: first turn is still waiting for agent events.
+	case <-doneFirst:
+		t.Fatal("first turn ended before interrupt")
+	}
+
+	e.handleMessage(p, &Message{
+		SessionKey: key,
+		MessageID:  "m2",
+		UserID:     "u1",
+		UserName:   "User",
+		Platform:   "test",
+		Content:    "new instruction",
+		ReplyCtx:   "ctx-2",
+	})
+
+	select {
+	case <-running.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("interrupt mode did not close the running agent session")
+	}
+
+	select {
+	case <-doneFirst:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first turn did not exit after interrupt")
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		e.interactiveMu.Lock()
+		state := e.interactiveStates[key]
+		e.interactiveMu.Unlock()
+		if state != nil {
+			state.mu.Lock()
+			queued := len(state.pendingMessages)
+			current := state.agentSession
+			state.mu.Unlock()
+			if queued != 0 {
+				t.Fatalf("interrupt mode queued %d messages, want 0", queued)
+			}
+			if current == next {
+				break
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatal("interrupt mode did not start processing the new message")
+		default:
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	sent := p.getSent()
+	for _, line := range sent {
+		if strings.Contains(line, e.i18n.T(MsgMessageQueued)) {
+			t.Fatalf("interrupt mode should not send queued reply, got %v", sent)
+		}
+	}
+}
+
 // TestProcessInteractiveMessageWith_NilAgentSession_NoPanic is a regression
 // test for issue #1181. When a long-running agent turn is force-killed
 // (e.g. by max_turn_time_mins) the cleanup path may leave an interactive
@@ -14877,8 +14976,8 @@ func TestIsAllowResponse_WithMultipleMentions(t *testing.T) {
 func TestIsAllowResponse_NotInsideOtherWord(t *testing.T) {
 	cases := []string{
 		"禁止允许这种",
-		"不允许这样",   // "不允许" has its own deny entry, but as part of "不允许这样" the user clearly is denying / negating, never allowing.
-		"我不太允许这件事", // long sentence, no token equals "允许"
+		"不允许这样",                            // "不允许" has its own deny entry, but as part of "不允许这样" the user clearly is denying / negating, never allowing.
+		"我不太允许这件事",                         // long sentence, no token equals "允许"
 		"please don't allowall the things", // FieldsFunc keeps "allowall" intact, but it is the approveAll single-token form, not allow.
 		"hello world",
 		"",
@@ -14906,7 +15005,7 @@ func TestIsDenyResponse_WithMention(t *testing.T) {
 	}
 
 	negatives := []string{
-		"拒绝症患者",       // embedded — must not match
+		"拒绝症患者",        // embedded — must not match
 		"我们都不应该 hello", // unrelated
 	}
 	for _, s := range negatives {

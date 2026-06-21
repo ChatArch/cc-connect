@@ -142,6 +142,14 @@ level = "info" # debug, info, warn, error
 # 推荐值：30–60。默认 0（禁用）。
 # max_turn_time_mins = 0  # default: disabled / 默认禁用
 
+# Busy ordinary-message handling while an agent turn is already running.
+# 忙时普通消息处理方式：当上一轮 agent 任务仍在运行时，新普通消息如何处理。
+# [queue]
+# max_depth = 5                  # max queued messages per session / 每个会话最大排队消息数
+# busy_input_mode = "queue"       # "queue" (default) or "interrupt"
+#                                # queue: process after current task finishes / 当前任务结束后再处理
+#                                # interrupt: stop current task and process the new message / 打断当前任务并处理新消息
+
 # Auto-reset the active session after the user has been inactive for a while.
 # Unlike idle_timeout_mins, this does not detect stuck agent execution. It
 # rotates to a fresh cc-connect session when the user comes back after being idle.
