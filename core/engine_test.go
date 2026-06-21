@@ -72,6 +72,43 @@ func (p *stubPlatformEngine) Send(_ context.Context, _ any, content string) erro
 }
 func (p *stubPlatformEngine) Stop() error { return nil }
 
+type typingRecorderPlatform struct {
+	stubPlatformEngine
+	starts []any
+	stops  []any
+}
+
+func (p *typingRecorderPlatform) StartTyping(_ context.Context, replyCtx any) func() {
+	p.mu.Lock()
+	p.starts = append(p.starts, replyCtx)
+	p.mu.Unlock()
+	return func() {
+		p.mu.Lock()
+		p.stops = append(p.stops, replyCtx)
+		p.mu.Unlock()
+	}
+}
+
+func (p *typingRecorderPlatform) typingSnapshot() (starts []any, stops []any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	starts = append([]any(nil), p.starts...)
+	stops = append([]any(nil), p.stops...)
+	return starts, stops
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool, message string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal(message)
+}
+
 func (p *stubPlatformEngine) getSent() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -9240,6 +9277,149 @@ func TestBusyInputModeInterruptStopsCurrentSessionWithoutQueueing(t *testing.T) 
 		if strings.Contains(line, e.i18n.T(MsgMessageQueued)) {
 			t.Fatalf("interrupt mode should not send queued reply, got %v", sent)
 		}
+	}
+}
+
+func TestBusyInputModeInterruptSwitchesProcessingIndicatorToNewMessage(t *testing.T) {
+	p := &typingRecorderPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}
+	running := newControllableSession("running")
+	next := newControllableSession("next")
+	startCalls := 0
+	agent := &controllableAgent{
+		startSessionFn: func(_ context.Context, _ string) (AgentSession, error) {
+			startCalls++
+			if startCalls == 1 {
+				return running, nil
+			}
+			return next, nil
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetBusyInputMode(BusyInputModeInterrupt)
+
+	key := "test:interrupt-indicator"
+	firstSession := e.sessions.GetOrCreateActive(key)
+	if !firstSession.TryLock() {
+		t.Fatal("expected to lock first session")
+	}
+
+	doneFirst := make(chan struct{})
+	go func() {
+		defer close(doneFirst)
+		e.processInteractiveMessageWith(p, &Message{
+			SessionKey: key,
+			MessageID:  "m1",
+			UserID:     "u1",
+			UserName:   "User",
+			Platform:   "test",
+			Content:    "long running task",
+			ReplyCtx:   "ctx-1",
+		}, firstSession, agent, e.sessions, key, "", key)
+	}()
+
+	waitForCondition(t, 2*time.Second, func() bool {
+		starts, _ := p.typingSnapshot()
+		return len(starts) == 1 && starts[0] == "ctx-1"
+	}, "first message processing indicator did not start")
+
+	e.handleMessage(p, &Message{
+		SessionKey: key,
+		MessageID:  "m2",
+		UserID:     "u1",
+		UserName:   "User",
+		Platform:   "test",
+		Content:    "new instruction",
+		ReplyCtx:   "ctx-2",
+	})
+
+	select {
+	case <-running.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("interrupt mode did not close the running agent session")
+	}
+	select {
+	case <-doneFirst:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first turn did not exit after interrupt")
+	}
+
+	waitForCondition(t, 2*time.Second, func() bool {
+		starts, stops := p.typingSnapshot()
+		return len(starts) >= 2 && starts[0] == "ctx-1" && starts[1] == "ctx-2" && len(stops) >= 1 && stops[0] == "ctx-1"
+	}, "interrupt did not move processing indicator from old message to new message")
+}
+
+func TestBusyInputModeInterruptBareControlWordStopsWithoutAgentReply(t *testing.T) {
+	p := &typingRecorderPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}
+	running := newControllableSession("running")
+	startCalls := 0
+	agent := &controllableAgent{
+		startSessionFn: func(_ context.Context, _ string) (AgentSession, error) {
+			startCalls++
+			return running, nil
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetBusyInputMode(BusyInputModeInterrupt)
+
+	key := "test:bare-interrupt"
+	firstSession := e.sessions.GetOrCreateActive(key)
+	if !firstSession.TryLock() {
+		t.Fatal("expected to lock first session")
+	}
+
+	doneFirst := make(chan struct{})
+	go func() {
+		defer close(doneFirst)
+		e.processInteractiveMessageWith(p, &Message{
+			SessionKey: key,
+			MessageID:  "m1",
+			UserID:     "u1",
+			UserName:   "User",
+			Platform:   "test",
+			Content:    "long running task",
+			ReplyCtx:   "ctx-1",
+		}, firstSession, agent, e.sessions, key, "", key)
+	}()
+
+	waitForCondition(t, 2*time.Second, func() bool {
+		starts, _ := p.typingSnapshot()
+		return len(starts) == 1
+	}, "first message processing indicator did not start")
+
+	e.handleMessage(p, &Message{
+		SessionKey: key,
+		MessageID:  "m2",
+		UserID:     "u1",
+		UserName:   "User",
+		Platform:   "test",
+		Content:    "interrupt",
+		ReplyCtx:   "ctx-2",
+	})
+
+	select {
+	case <-running.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bare interrupt did not close the running agent session")
+	}
+	select {
+	case <-doneFirst:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first turn did not exit after bare interrupt")
+	}
+
+	starts, stops := p.typingSnapshot()
+	if len(starts) != 1 || starts[0] != "ctx-1" {
+		t.Fatalf("bare interrupt should not start a new agent turn indicator, starts=%#v", starts)
+	}
+	if len(stops) == 0 || stops[0] != "ctx-1" {
+		t.Fatalf("bare interrupt should clear old processing indicator, stops=%#v", stops)
+	}
+	if startCalls != 1 {
+		t.Fatalf("bare interrupt started %d agent sessions, want 1", startCalls)
+	}
+	if sent := p.getSent(); len(sent) != 0 {
+		t.Fatalf("bare interrupt should not send a natural-language ack, got %#v", sent)
 	}
 }
 

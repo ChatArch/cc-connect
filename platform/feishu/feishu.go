@@ -210,7 +210,7 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 	}
 	reactionEmoji, _ := opts["reaction_emoji"].(string)
 	if reactionEmoji == "" {
-		reactionEmoji = "OnIt"
+		reactionEmoji = "Typing"
 	}
 	if v, ok := opts["reaction_emoji"].(string); ok && v == "none" {
 		reactionEmoji = ""

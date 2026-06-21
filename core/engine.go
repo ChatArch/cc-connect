@@ -46,6 +46,15 @@ func normalizeBusyInputMode(mode BusyInputMode) BusyInputMode {
 	}
 }
 
+func isBareInterruptControlMessage(content string) bool {
+	switch strings.ToLower(strings.TrimSpace(content)) {
+	case "interrupt", "/interrupt":
+		return true
+	default:
+		return false
+	}
+}
+
 // previewText truncates s to maxRunes runes for safe inclusion in debug logs.
 // Truncation uses runes (not bytes) so multi-byte characters render cleanly.
 // Newlines are replaced with literal "\n" to keep each log entry on one line.
@@ -2765,6 +2774,15 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		}
 		if e.busyInputMode == BusyInputModeInterrupt {
 			if e.interruptBusySession(interactiveKey, session) {
+				if isBareInterruptControlMessage(content) {
+					if e.waitForSessionLock(session, recalledStopLockWait) {
+						session.UnlockWithoutUpdate()
+					} else {
+						slog.Warn("bare busy interrupt requested but session lock did not release before timeout",
+							"session", msg.SessionKey, "interactive_key", interactiveKey)
+					}
+					return
+				}
 				if e.waitForSessionLock(session, recalledStopLockWait) {
 					goto sessionLocked
 				}
