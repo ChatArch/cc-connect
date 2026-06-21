@@ -1226,6 +1226,23 @@ func extractBasePlatform(p core.Platform) *Platform {
 	return nil
 }
 
+func TestNewPlatform_DefaultReactionEmojiKeepsCCConnectStatus(t *testing.T) {
+	p, err := newPlatform("feishu", lark.FeishuBaseUrl, map[string]any{
+		"app_id":     "cli_test",
+		"app_secret": "secret",
+	})
+	if err != nil {
+		t.Fatalf("newPlatform error: %v", err)
+	}
+	fp := extractBasePlatform(p)
+	if fp == nil {
+		t.Fatal("expected *Platform or *interactivePlatform")
+	}
+	if fp.reactionEmoji != "OnIt" {
+		t.Fatalf("default reactionEmoji = %q, want OnIt", fp.reactionEmoji)
+	}
+}
+
 func TestNewPlatform_RequireMentionFalseAliasesGroupReplyAll(t *testing.T) {
 	// Regression test for #1141: users set require_mention = false but feishu
 	// reads group_reply_all. The two options must be equivalent so that
