@@ -9273,10 +9273,17 @@ func TestBusyInputModeInterruptStopsCurrentSessionWithoutQueueing(t *testing.T) 
 	}
 
 	sent := p.getSent()
+	gotInterruptAck := false
 	for _, line := range sent {
+		if line == e.i18n.T(MsgBusyInterrupted) {
+			gotInterruptAck = true
+		}
 		if strings.Contains(line, e.i18n.T(MsgMessageQueued)) {
 			t.Fatalf("interrupt mode should not send queued reply, got %v", sent)
 		}
+	}
+	if !gotInterruptAck {
+		t.Fatalf("interrupt mode should send interrupt ack %q, got %v", e.i18n.T(MsgBusyInterrupted), sent)
 	}
 }
 
@@ -9347,80 +9354,6 @@ func TestBusyInputModeInterruptSwitchesProcessingIndicatorToNewMessage(t *testin
 		starts, stops := p.typingSnapshot()
 		return len(starts) >= 2 && starts[0] == "ctx-1" && starts[1] == "ctx-2" && len(stops) >= 1 && stops[0] == "ctx-1"
 	}, "interrupt did not move processing indicator from old message to new message")
-}
-
-func TestBusyInputModeInterruptBareControlWordStopsWithoutAgentReply(t *testing.T) {
-	p := &typingRecorderPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}
-	running := newControllableSession("running")
-	startCalls := 0
-	agent := &controllableAgent{
-		startSessionFn: func(_ context.Context, _ string) (AgentSession, error) {
-			startCalls++
-			return running, nil
-		},
-	}
-	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
-	e.SetBusyInputMode(BusyInputModeInterrupt)
-
-	key := "test:bare-interrupt"
-	firstSession := e.sessions.GetOrCreateActive(key)
-	if !firstSession.TryLock() {
-		t.Fatal("expected to lock first session")
-	}
-
-	doneFirst := make(chan struct{})
-	go func() {
-		defer close(doneFirst)
-		e.processInteractiveMessageWith(p, &Message{
-			SessionKey: key,
-			MessageID:  "m1",
-			UserID:     "u1",
-			UserName:   "User",
-			Platform:   "test",
-			Content:    "long running task",
-			ReplyCtx:   "ctx-1",
-		}, firstSession, agent, e.sessions, key, "", key)
-	}()
-
-	waitForCondition(t, 2*time.Second, func() bool {
-		starts, _ := p.typingSnapshot()
-		return len(starts) == 1
-	}, "first message processing indicator did not start")
-
-	e.handleMessage(p, &Message{
-		SessionKey: key,
-		MessageID:  "m2",
-		UserID:     "u1",
-		UserName:   "User",
-		Platform:   "test",
-		Content:    "interrupt",
-		ReplyCtx:   "ctx-2",
-	})
-
-	select {
-	case <-running.closed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("bare interrupt did not close the running agent session")
-	}
-	select {
-	case <-doneFirst:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first turn did not exit after bare interrupt")
-	}
-
-	starts, stops := p.typingSnapshot()
-	if len(starts) != 1 || starts[0] != "ctx-1" {
-		t.Fatalf("bare interrupt should not start a new agent turn indicator, starts=%#v", starts)
-	}
-	if len(stops) == 0 || stops[0] != "ctx-1" {
-		t.Fatalf("bare interrupt should clear old processing indicator, stops=%#v", stops)
-	}
-	if startCalls != 1 {
-		t.Fatalf("bare interrupt started %d agent sessions, want 1", startCalls)
-	}
-	if sent := p.getSent(); len(sent) != 0 {
-		t.Fatalf("bare interrupt should not send a natural-language ack, got %#v", sent)
-	}
 }
 
 // TestProcessInteractiveMessageWith_NilAgentSession_NoPanic is a regression

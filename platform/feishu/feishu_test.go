@@ -1226,7 +1226,7 @@ func extractBasePlatform(p core.Platform) *Platform {
 	return nil
 }
 
-func TestNewPlatform_DefaultReactionEmojiMatchesHermesFeishuStatus(t *testing.T) {
+func TestNewPlatform_DefaultReactionEmojiKeepsCCConnectStatus(t *testing.T) {
 	p, err := newPlatform("feishu", lark.FeishuBaseUrl, map[string]any{
 		"app_id":     "cli_test",
 		"app_secret": "secret",
@@ -1238,8 +1238,8 @@ func TestNewPlatform_DefaultReactionEmojiMatchesHermesFeishuStatus(t *testing.T)
 	if fp == nil {
 		t.Fatal("expected *Platform or *interactivePlatform")
 	}
-	if fp.reactionEmoji != "Typing" {
-		t.Fatalf("default reactionEmoji = %q, want Typing", fp.reactionEmoji)
+	if fp.reactionEmoji != "OnIt" {
+		t.Fatalf("default reactionEmoji = %q, want OnIt", fp.reactionEmoji)
 	}
 }
 
