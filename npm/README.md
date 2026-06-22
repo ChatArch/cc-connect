@@ -4,10 +4,12 @@ Bridge local AI coding agents (Claude Code, Cursor, Gemini CLI, Codex) to messag
 
 Chat with your AI dev assistant from anywhere.
 
+This npm package is the ChatArch distribution of `cc-connect`. It installs the `cc-connect` CLI by downloading the matching binary from the ChatArch GitHub Release.
+
 ## Install
 
 ```bash
-npm install -g cc-connect
+npm install -g @chatarch/cc-connect
 ```
 
 ## Usage
@@ -23,4 +25,4 @@ cc-connect -config /path/to/config.toml
 
 ## Documentation
 
-See full documentation at: https://github.com/chenhg5/cc-connect
+See full documentation at: https://github.com/ChatArch/cc-connect

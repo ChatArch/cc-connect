@@ -1,0 +1,96 @@
+name: npm Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to publish from, for example v1.0.0'
+        required: true
+        default: 'v1.0.0'
+      publish:
+        description: 'Set true to publish to npm; false runs dry-run only'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm-publish:
+    name: Pack and optionally publish @chatarch/cc-connect
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve npm publish tag
+        id: publish_ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$INPUT_TAG"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid npm publish tag: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.publish_ref.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Verify package metadata
+        working-directory: npm
+        env:
+          EXPECTED_VERSION: ${{ steps.publish_ref.outputs.version }}
+        run: |
+          set -euo pipefail
+          node -e "const p=require('./package.json'); if (p.name !== '@chatarch/cc-connect') throw new Error('unexpected package name '+p.name); if (p.version !== process.env.EXPECTED_VERSION) throw new Error('package version does not match tag'); if (p.private) throw new Error('package is private');"
+
+      - name: Verify GitHub Release assets exist
+        env:
+          RELEASE_TAG: ${{ steps.publish_ref.outputs.tag }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            "$api" > release.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const tag = process.env.RELEASE_TAG;
+          const release = JSON.parse(fs.readFileSync('release.json', 'utf8'));
+          const names = new Set((release.assets || []).map((asset) => asset.name));
+          const required = [
+            `cc-connect-${tag}-darwin-amd64.tar.gz`,
+            `cc-connect-${tag}-darwin-arm64.tar.gz`,
+            `cc-connect-${tag}-linux-amd64.tar.gz`,
+            `cc-connect-${tag}-linux-arm64.tar.gz`,
+            `cc-connect-${tag}-windows-amd64.zip`,
+            `cc-connect-${tag}-windows-arm64.zip`,
+            'checksums.txt',
+          ];
+          const missing = required.filter((name) => !names.has(name));
+          if (missing.length) {
+            throw new Error(`missing GitHub Release assets: ${missing.join(', ')}`);
+          }
+          NODE
+
+      - name: npm pack dry-run
+        working-directory: npm
+        run: npm pack --dry-run --json
+
+      - name: Publish to npm
+        if: ${{ inputs.publish }}
+        working-directory: npm
+        run: npm publish --access public --provenance

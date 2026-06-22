@@ -6958,7 +6958,7 @@ func TestHandlePendingPermission_CronFallback(t *testing.T) {
 // and events channel can be controlled by the test.
 type controllableAgentSession struct {
 	sessionID       string
-	alive           bool
+	alive           atomic.Bool
 	events          chan Event
 	closed          chan struct{} // closed when Close() is called
 	model           string
@@ -6970,12 +6970,13 @@ type controllableAgentSession struct {
 }
 
 func newControllableSession(id string) *controllableAgentSession {
-	return &controllableAgentSession{
+	s := &controllableAgentSession{
 		sessionID: id,
-		alive:     true,
 		events:    make(chan Event, 8),
 		closed:    make(chan struct{}),
 	}
+	s.alive.Store(true)
+	return s
 }
 
 func (s *controllableAgentSession) Send(_ string, _ []ImageAttachment, _ []FileAttachment) error {
@@ -6994,9 +6995,9 @@ func (s *controllableAgentSession) GetUsage(_ context.Context) (*UsageReport, er
 	return s.report, s.usageErr
 }
 func (s *controllableAgentSession) GetContextUsage() *ContextUsage { return s.contextUsage }
-func (s *controllableAgentSession) Alive() bool                    { return s.alive }
+func (s *controllableAgentSession) Alive() bool                    { return s.alive.Load() }
 func (s *controllableAgentSession) Close() error {
-	s.alive = false
+	s.alive.Store(false)
 	close(s.events)
 	select {
 	case <-s.closed:
@@ -8123,14 +8124,15 @@ type queuingAgentSession struct {
 }
 
 func newQueuingSession(id string) *queuingAgentSession {
-	return &queuingAgentSession{
+	s := &queuingAgentSession{
 		controllableAgentSession: controllableAgentSession{
 			sessionID: id,
-			alive:     true,
 			events:    make(chan Event, 16),
 			closed:    make(chan struct{}),
 		},
 	}
+	s.alive.Store(true)
+	return s
 }
 
 func (s *queuingAgentSession) Send(prompt string, _ []ImageAttachment, _ []FileAttachment) error {
@@ -8149,16 +8151,17 @@ type blockingSendAgentSession struct {
 }
 
 func newBlockingSendSession(id string) *blockingSendAgentSession {
-	return &blockingSendAgentSession{
+	s := &blockingSendAgentSession{
 		controllableAgentSession: controllableAgentSession{
 			sessionID: id,
-			alive:     true,
 			events:    make(chan Event, 16),
 			closed:    make(chan struct{}),
 		},
 		sendStarted: make(chan struct{}, 1),
 		unblock:     make(chan struct{}),
 	}
+	s.alive.Store(true)
+	return s
 }
 
 func (s *blockingSendAgentSession) Send(_ string, _ []ImageAttachment, _ []FileAttachment) error {
@@ -8177,20 +8180,21 @@ type blockingCloseAgentSession struct {
 }
 
 func newBlockingCloseSession(id string) *blockingCloseAgentSession {
-	return &blockingCloseAgentSession{
+	s := &blockingCloseAgentSession{
 		controllableAgentSession: controllableAgentSession{
 			sessionID: id,
-			alive:     true,
 			events:    make(chan Event, 16),
 			closed:    make(chan struct{}),
 		},
 		closeStarted: make(chan struct{}, 1),
 		releaseClose: make(chan struct{}),
 	}
+	s.alive.Store(true)
+	return s
 }
 
 func (s *blockingCloseAgentSession) Close() error {
-	s.alive = false
+	s.alive.Store(false)
 	select {
 	case s.closeStarted <- struct{}{}:
 	default:
@@ -9272,7 +9276,7 @@ func TestQueueMessage_NoState_ReturnsFalse(t *testing.T) {
 func TestQueueMessage_DeadSession_ReturnsFalse(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	sess := newQueuingSession("dead")
-	sess.alive = false
+	sess.alive.Store(false)
 	agent := &controllableAgent{nextSession: sess}
 	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
 
@@ -13798,9 +13802,8 @@ func TestUnsolicitedReader_PermissionDeny(t *testing.T) {
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
 	defer e.Stop()
 
-	sess := newControllableSession("unsol-perm")
 	permRecorder := &permRecordingSession{
-		controllableAgentSession: *sess,
+		controllableAgentSession: newControllableSession("unsol-perm"),
 	}
 
 	sessions := e.sessions
@@ -13852,7 +13855,7 @@ func TestUnsolicitedReader_PermissionDeny(t *testing.T) {
 
 // permRecordingSession wraps controllableAgentSession and records permission responses.
 type permRecordingSession struct {
-	controllableAgentSession
+	*controllableAgentSession
 	mu             sync.Mutex
 	permCalls      int
 	lastPermResult PermissionResult
