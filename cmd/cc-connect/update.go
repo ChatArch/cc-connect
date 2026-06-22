@@ -4,8 +4,11 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,11 +21,11 @@ import (
 )
 
 const (
-	githubRepo   = "chenhg5/cc-connect"
+	githubRepo   = "ChatArch/cc-connect"
 	githubAPI    = "https://api.github.com/repos/" + githubRepo + "/releases/latest"
 	githubAllAPI = "https://api.github.com/repos/" + githubRepo + "/releases"
 	downloadBase = "https://github.com/" + githubRepo + "/releases/download"
-	giteeAPI     = "https://gitee.com/api/v5/repos/cg33/cc-connect/releases/latest"
+	giteeAPI     = ""
 )
 
 // cachedLatestVersion 缓存最新版本信息，避免频繁请求API
@@ -45,9 +48,16 @@ type githubRelease struct {
 // 优先使用Gitee，如果失败则回退到GitHub
 func fetchLatestStableReleaseAsync() {
 	go func() {
-		release, err := fetchLatestStableFromGitee()
-		if err != nil || release == nil || release.TagName == "" {
+		var release *githubRelease
+		if giteeAPI != "" {
+			candidate, err := fetchLatestStableFromGitee()
+			if err == nil {
+				release = candidate
+			}
+		}
+		if release == nil || release.TagName == "" {
 			// Gitee失败，尝试GitHub
+			var err error
 			release, err = fetchLatestStableRelease()
 			if err != nil || release == nil {
 				return
@@ -413,16 +423,87 @@ func downloadToTemp(url string) (string, error) {
 		return "", err
 	}
 
-	size, err := io.Copy(tmp, resp.Body)
+	h := sha256.New()
+	size, err := io.Copy(io.MultiWriter(tmp, h), resp.Body)
 	if err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		if closeErr := tmp.Close(); closeErr != nil {
+			slog.Debug("update: close temp after write error", "error", closeErr)
+		}
+		cleanupDownloadedTemp(tmp.Name())
 		return "", fmt.Errorf("write: %w", err)
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		cleanupDownloadedTemp(tmp.Name())
+		return "", fmt.Errorf("close temp file: %w", err)
+	}
+	if err := verifyDownloadedChecksum(client, url, h); err != nil {
+		cleanupDownloadedTemp(tmp.Name())
+		return "", err
+	}
 
 	fmt.Printf("Downloaded %.1f MB\n", float64(size)/1024/1024)
 	return tmp.Name(), nil
+}
+
+func verifyDownloadedChecksum(client *http.Client, assetURL string, h hash.Hash) error {
+	filename, checksumsURL, err := checksumURL(assetURL)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("GET", checksumsURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "cc-connect-updater")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download checksums: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("update: close checksums response body", "error", err)
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("checksums returned HTTP %d", resp.StatusCode)
+	}
+	checksums, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	expected, err := checksumForFile(string(checksums), filename)
+	if err != nil {
+		return err
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("checksum mismatch for %s", filename)
+	}
+	return nil
+}
+
+func cleanupDownloadedTemp(path string) {
+	if err := os.Remove(path); err != nil {
+		slog.Debug("update: remove temp file", "path", path, "error", err)
+	}
+}
+
+func checksumURL(assetURL string) (filename, checksumsURL string, err error) {
+	slash := strings.LastIndex(assetURL, "/")
+	if slash < 0 || slash == len(assetURL)-1 {
+		return "", "", fmt.Errorf("cannot derive checksum URL from %s", assetURL)
+	}
+	return assetURL[slash+1:], assetURL[:slash+1] + "checksums.txt", nil
+}
+
+func checksumForFile(checksums, filename string) (string, error) {
+	for _, line := range strings.Split(checksums, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.TrimPrefix(fields[1], "*") == filename {
+			return strings.ToLower(fields[0]), nil
+		}
+	}
+	return "", fmt.Errorf("checksum entry not found for %s", filename)
 }
 
 func replaceExecutable(target, src string) error {
@@ -593,7 +674,7 @@ func comparePreRelease(a, b string) int {
 }
 
 // syncNpmPackageVersion detects if the binary lives inside an npm package
-// (node_modules/cc-connect/bin/) and updates the package.json version to
+// (node_modules/cc-connect/bin/ or node_modules/@chatarch/cc-connect/bin/) and updates the package.json version to
 // match the newly installed binary. Without this, the npm wrapper's run.js
 // would see a version mismatch and re-download the old version on next run.
 func syncNpmPackageVersion(execPath, newVer string) {
@@ -615,7 +696,7 @@ func syncNpmPackageVersion(execPath, newVer string) {
 	}
 
 	name, _ := pkg["name"].(string)
-	if name != "cc-connect" {
+	if name != "cc-connect" && name != "@chatarch/cc-connect" {
 		return
 	}
 
@@ -637,7 +718,7 @@ func syncNpmPackageVersion(execPath, newVer string) {
 	if err := os.WriteFile(pkgJSON, out, 0o644); err != nil {
 		slog.Warn("update: failed to sync npm package.json version", "error", err)
 		fmt.Println("⚠️  Note: npm package version not synced. If the next run re-downloads an old version,")
-		fmt.Println("   please run: npm update -g cc-connect")
+		fmt.Println("   please run: npm update -g @chatarch/cc-connect")
 	} else {
 		slog.Debug("update: synced npm package.json version", "old", oldVer, "new", newVer)
 	}

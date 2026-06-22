@@ -3,6 +3,7 @@
 "use strict";
 
 const { execSync } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
@@ -13,8 +14,8 @@ const PACKAGE = require("./package.json");
 const VERSION = `v${PACKAGE.version}`;
 const NAME = "cc-connect";
 
-const GITHUB_REPO = "chenhg5/cc-connect";
-const GITEE_REPO = "cg33/cc-connect";
+const GITHUB_REPO = "ChatArch/cc-connect";
+const GITEE_REPO = null;
 
 const PLATFORM_MAP = {
   darwin: "darwin",
@@ -42,10 +43,11 @@ function getPlatformInfo() {
 }
 
 function getDownloadURLs(filename) {
-  return [
-    `https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${filename}`,
-    `https://gitee.com/${GITEE_REPO}/releases/download/${VERSION}/${filename}`,
-  ];
+  const urls = [`https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${filename}`];
+  if (GITEE_REPO) {
+    urls.push(`https://gitee.com/${GITEE_REPO}/releases/download/${VERSION}/${filename}`);
+  }
+  return urls;
 }
 
 function fetch(url, redirects = 5) {
@@ -75,6 +77,7 @@ async function download(urls) {
     try {
       console.log(`[cc-connect] Downloading from ${url}`);
       const data = await fetch(url);
+      await verifyChecksum(url, data);
       console.log(`[cc-connect] Downloaded ${(data.length / 1024 / 1024).toFixed(1)} MB`);
       return data;
     } catch (err) {
@@ -86,6 +89,32 @@ async function download(urls) {
       `  Tried: ${urls.join(", ")}\n` +
       `  You can download manually from https://github.com/${GITHUB_REPO}/releases`
   );
+}
+
+async function verifyChecksum(assetURL, data) {
+  const slash = assetURL.lastIndexOf("/");
+  if (slash < 0) {
+    throw new Error(`[cc-connect] Cannot derive checksum URL from ${assetURL}`);
+  }
+  const filename = assetURL.slice(slash + 1);
+  const checksumsURL = assetURL.slice(0, slash + 1) + "checksums.txt";
+  console.log(`[cc-connect] Verifying checksum from ${checksumsURL}`);
+  const checksums = (await fetch(checksumsURL)).toString("utf8");
+  const expected = parseChecksum(checksums, filename);
+  const actual = crypto.createHash("sha256").update(data).digest("hex");
+  if (actual !== expected) {
+    throw new Error(`[cc-connect] Checksum mismatch for ${filename}`);
+  }
+}
+
+function parseChecksum(checksums, filename) {
+  for (const line of checksums.split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length >= 2 && parts[1].replace(/^\*/, "") === filename) {
+      return parts[0].toLowerCase();
+    }
+  }
+  throw new Error(`[cc-connect] No checksum entry for ${filename}`);
 }
 
 function extractTarGz(buffer, destDir, binaryName) {

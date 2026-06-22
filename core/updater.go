@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,10 +22,10 @@ import (
 )
 
 const (
-	githubReleasesAPI = "https://api.github.com/repos/chenhg5/cc-connect/releases"
-	giteeReleasesAPI  = "https://gitee.com/api/v5/repos/cg33/cc-connect/releases"
-	githubDownload    = "https://github.com/chenhg5/cc-connect/releases/download"
-	giteeDownload     = "https://gitee.com/cg33/cc-connect/releases/download"
+	githubReleasesAPI = "https://api.github.com/repos/ChatArch/cc-connect/releases"
+	giteeReleasesAPI  = ""
+	githubDownload    = "https://github.com/ChatArch/cc-connect/releases/download"
+	giteeDownload     = ""
 )
 
 type ReleaseInfo struct {
@@ -77,15 +79,22 @@ func fetchReleases(preferGitee bool) ([]ReleaseInfo, error) {
 	}
 	sources := []source{
 		{"github", githubReleasesAPI + "?per_page=20"},
-		{"gitee", giteeReleasesAPI + "?per_page=20&direction=desc&sort=created"},
+	}
+	if giteeReleasesAPI != "" {
+		sources = append(sources, source{"gitee", giteeReleasesAPI + "?per_page=20&direction=desc&sort=created"})
 	}
 	if preferGitee {
-		sources[0], sources[1] = sources[1], sources[0]
+		if len(sources) > 1 {
+			sources[0], sources[1] = sources[1], sources[0]
+		}
 	}
 
 	releases, err := fetchReleasesFrom(sources[0].url)
 	if err == nil && len(releases) > 0 {
 		return releases, nil
+	}
+	if len(sources) == 1 {
+		return nil, err
 	}
 	slog.Debug("updater: primary source failed, trying fallback", "primary", sources[0].name, "error", err)
 
@@ -134,10 +143,14 @@ func SelfUpdate(tag string, preferGitee bool) error {
 	}
 	filename := fmt.Sprintf("cc-connect-%s-%s-%s%s", tag, goos, goarch, ext)
 
-	giteeURL := fmt.Sprintf("%s/%s/%s", giteeDownload, tag, filename)
 	githubURL := fmt.Sprintf("%s/%s/%s", githubDownload, tag, filename)
-	urls := []string{githubURL, giteeURL}
-	if preferGitee {
+	urls := []string{githubURL}
+	if giteeDownload != "" {
+		giteeURL := fmt.Sprintf("%s/%s/%s", giteeDownload, tag, filename)
+		urls = append(urls, giteeURL)
+	}
+	if preferGitee && len(urls) > 1 {
+		giteeURL := urls[1]
 		urls = []string{giteeURL, githubURL}
 	}
 
@@ -145,7 +158,7 @@ func SelfUpdate(tag string, preferGitee bool) error {
 	var lastErr error
 	for _, u := range urls {
 		slog.Info("updater: downloading", "url", u)
-		data, lastErr = downloadFile(u)
+		data, lastErr = downloadVerifiedFile(u)
 		if lastErr == nil {
 			break
 		}
@@ -167,6 +180,17 @@ func SelfUpdate(tag string, preferGitee bool) error {
 	}
 
 	return replaceBinary(binary)
+}
+
+func downloadVerifiedFile(url string) ([]byte, error) {
+	data, err := downloadFile(url)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyBytesChecksum(url, data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func downloadFile(url string) ([]byte, error) {
@@ -196,6 +220,45 @@ func downloadFile(url string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+func verifyBytesChecksum(assetURL string, data []byte) error {
+	filename, checksumsURL, err := checksumURL(assetURL)
+	if err != nil {
+		return err
+	}
+	checksums, err := downloadFile(checksumsURL)
+	if err != nil {
+		return fmt.Errorf("download checksums: %w", err)
+	}
+	expected, err := checksumForFile(string(checksums), filename)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	actual := hex.EncodeToString(sum[:])
+	if actual != expected {
+		return fmt.Errorf("checksum mismatch for %s", filename)
+	}
+	return nil
+}
+
+func checksumURL(assetURL string) (filename, checksumsURL string, err error) {
+	slash := strings.LastIndex(assetURL, "/")
+	if slash < 0 || slash == len(assetURL)-1 {
+		return "", "", fmt.Errorf("cannot derive checksum URL from %s", assetURL)
+	}
+	return assetURL[slash+1:], assetURL[:slash+1] + "checksums.txt", nil
+}
+
+func checksumForFile(checksums, filename string) (string, error) {
+	for _, line := range strings.Split(checksums, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.TrimPrefix(fields[1], "*") == filename {
+			return strings.ToLower(fields[0]), nil
+		}
+	}
+	return "", fmt.Errorf("checksum entry not found for %s", filename)
 }
 
 func extractBinaryFromTarGz(data []byte) ([]byte, error) {
