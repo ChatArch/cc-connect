@@ -1232,13 +1232,17 @@ func TestOnMessageThreadIsolationAdmitsAttachmentWithoutMention(t *testing.T) {
 		},
 	}
 
-	// Step 1: opening message @mentions the bot — establishes the thread.
-	if err := p.onMessage(context.Background(), buildEvent(rootMsgID, "text", `{"text":"@_user_1 看看这个"}`, botMention, "")); err != nil {
+	threadKey := "feishu:" + chatID + ":root:" + rootMsgID
+	p.markCreatedThreadSession(threadKey)
+
+	// Step 1: opening message @mentions the bot inside a thread that was
+	// already created by /thread — this establishes the active thread for
+	// attachment-only follow-ups.
+	if err := p.onMessage(context.Background(), buildEvent("om_thread_open", "text", `{"text":"@_user_1 看看这个"}`, botMention, rootMsgID)); err != nil {
 		t.Fatalf("onMessage(root) error = %v", err)
 	}
-	threadKey := "feishu:" + chatID + ":root:" + rootMsgID
 	if !p.isActiveThreadSession(threadKey) {
-		t.Fatalf("thread %q should be marked active after @bot text", threadKey)
+		t.Fatalf("thread %q should be marked active after @bot text in created thread", threadKey)
 	}
 	select {
 	case <-received:
