@@ -764,6 +764,65 @@ func TestLark_ThreadIsolationUsesRootSessionKey(t *testing.T) {
 	}
 }
 
+func TestLark_CreatedThreadRoutesFollowupsWhenThreadIsolationDisabled(t *testing.T) {
+	p, err := newPlatform("lark", lark.LarkBaseUrl, map[string]any{
+		"app_id": "cli_xxx", "app_secret": "secret", "enable_feishu_card": true, "thread_isolation": false,
+	})
+	if err != nil {
+		t.Fatalf("newPlatform(lark) error = %v", err)
+	}
+	ip := p.(*interactivePlatform)
+	ip.botOpenID = "ou_bot"
+
+	chatID := "oc_test"
+	threadID := "omt_created"
+	openID := "ou_test"
+	msgType := "text"
+	chatType := "group"
+	senderType := "user"
+	createText := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	threadKey := "lark:oc_test:root:omt_created"
+
+	ip.markCreatedThreadSession(threadKey)
+
+	msgCh := make(chan *core.Message, 1)
+	ip.handler = func(_ core.Platform, msg *core.Message) {
+		msgCh <- msg
+	}
+
+	if err := ip.onMessage(context.Background(), &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: &openID},
+				SenderType: &senderType,
+			},
+			Message: &larkim.EventMessage{
+				MessageId:   stringPtr("om_child"),
+				ThreadId:    &threadID,
+				ChatId:      &chatID,
+				ChatType:    &chatType,
+				MessageType: &msgType,
+				Content:     stringPtr(`{"text":"@bot follow up"}`),
+				CreateTime:  &createText,
+				Mentions: []*larkim.MentionEvent{
+					{Key: stringPtr("@bot"), Id: &larkim.UserId{OpenId: stringPtr("ou_bot")}},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("onMessage(follow-up) error = %v", err)
+	}
+
+	select {
+	case msg := <-msgCh:
+		if msg.SessionKey != threadKey {
+			t.Fatalf("SessionKey = %q, want %q", msg.SessionKey, threadKey)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for follow-up message")
+	}
+}
+
 func TestLark_ThreadIsolationUsesThreadIDWhenRootIDMissing(t *testing.T) {
 	p, err := newPlatform("lark", lark.LarkBaseUrl, map[string]any{
 		"app_id": "cli_xxx", "app_secret": "secret", "enable_feishu_card": true, "thread_isolation": true,

@@ -167,6 +167,12 @@ type Platform struct {
 	// without requiring another @bot mention. Value is the last-seen time so
 	// stale entries can be expired by a future TTL sweep if needed.
 	activeThreadSessions sync.Map // sessionKey -> time.Time
+	// createdThreadSessions tracks native threads created explicitly by /thread.
+	// These are opt-in isolated sessions even when global thread_isolation is
+	// disabled, so follow-up messages in the same platform thread continue the
+	// /thread-created session without turning every existing thread into an
+	// isolated session.
+	createdThreadSessions sync.Map // sessionKey -> time.Time
 
 	richCardImageMu         sync.Mutex
 	richCardImageResolved   map[string]string
@@ -3071,19 +3077,46 @@ func (p *Platform) threadSessionKey(chatID, threadID string) string {
 	return fmt.Sprintf("%s:%s:root:%s", p.tag(), chatID, threadID)
 }
 
+func messageThreadRootID(msg *larkim.EventMessage) string {
+	if msg == nil {
+		return ""
+	}
+	rootID := stringValue(msg.ThreadId)
+	if rootID == "" {
+		rootID = stringValue(msg.RootId)
+	}
+	return rootID
+}
+
+func (p *Platform) markCreatedThreadSession(sessionKey string) {
+	if !isThreadSessionKey(sessionKey) {
+		return
+	}
+	p.createdThreadSessions.Store(sessionKey, time.Now())
+}
+
+func (p *Platform) isCreatedThreadSession(sessionKey string) bool {
+	_, ok := p.createdThreadSessions.Load(sessionKey)
+	return ok
+}
+
 // TODO: Session-key derivation and reply-thread behavior are split across multiple code paths here.
 // Should revisit thread/root handling without changing thread_isolation=false behavior.
 func (p *Platform) makeSessionKey(msg *larkim.EventMessage, chatID, userID string) string {
-	if p.threadIsolation && msg != nil && stringValue(msg.ChatType) == "group" {
-		rootID := stringValue(msg.ThreadId)
-		if rootID == "" {
-			rootID = stringValue(msg.RootId)
-		}
-		if rootID == "" {
-			rootID = stringValue(msg.MessageId)
-		}
-		if rootID != "" {
-			return p.threadSessionKey(chatID, rootID)
+	if msg != nil && stringValue(msg.ChatType) == "group" {
+		rootID := messageThreadRootID(msg)
+		if p.threadIsolation {
+			if rootID == "" {
+				rootID = stringValue(msg.MessageId)
+			}
+			if rootID != "" {
+				return p.threadSessionKey(chatID, rootID)
+			}
+		} else if rootID != "" {
+			sessionKey := p.threadSessionKey(chatID, rootID)
+			if p.isCreatedThreadSession(sessionKey) {
+				return sessionKey
+			}
 		}
 	}
 	if p.shareSessionInChannel {
@@ -3193,6 +3226,7 @@ func (p *Platform) CreateThread(ctx context.Context, rctx any) (core.ThreadTarge
 		messageID = rc.messageID
 	}
 	sessionKey := p.threadSessionKey(rc.chatID, threadID)
+	p.markCreatedThreadSession(sessionKey)
 	return core.ThreadTarget{
 		SessionKey: sessionKey,
 		ReplyCtx: replyContext{
