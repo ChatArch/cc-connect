@@ -198,7 +198,7 @@ func TestCreateThreadSeedCanBeReusedAsEditablePreview(t *testing.T) {
 					"thread_id":  threadID,
 				},
 			})
-		case r.URL.Path == "/open-apis/im/v1/messages/"+seedMessageID && r.Method == http.MethodPatch:
+		case r.URL.Path == "/open-apis/im/v1/messages/"+seedMessageID && r.Method == http.MethodPut:
 			patchCalls++
 			body, err := io.ReadAll(r.Body)
 			if err != nil {

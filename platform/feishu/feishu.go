@@ -4315,20 +4315,21 @@ func (p *Platform) patchCardMessage(ctx context.Context, messageID, cardJSON str
 
 func (p *Platform) patchTextMessage(ctx context.Context, messageID, content string) error {
 	body, _ := json.Marshal(map[string]string{"text": content})
-	req := larkim.NewPatchMessageReqBuilder().
+	req := larkim.NewUpdateMessageReqBuilder().
 		MessageId(messageID).
-		Body(larkim.NewPatchMessageReqBodyBuilder().
+		Body(larkim.NewUpdateMessageReqBodyBuilder().
+			MsgType(larkim.MsgTypeText).
 			Content(string(body)).
 			Build()).
 		Build()
-	return p.withTransientRetry(ctx, "patch text message", func() error {
-		return p.withFreshTenantAccessTokenRetry(ctx, "patch text message", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
-			resp, err := client.Im.Message.Patch(ctx, req, options...)
+	return p.withTransientRetry(ctx, "update text message", func() error {
+		return p.withFreshTenantAccessTokenRetry(ctx, "update text message", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
+			resp, err := client.Im.Message.Update(ctx, req, options...)
 			if err != nil {
-				return fmt.Errorf("%s: patch text message: %w", p.tag(), err)
+				return fmt.Errorf("%s: update text message: %w", p.tag(), err)
 			}
 			if !resp.Success() {
-				return fmt.Errorf("%s: patch text message code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
+				return fmt.Errorf("%s: update text message code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
 			}
 			return nil
 		})
