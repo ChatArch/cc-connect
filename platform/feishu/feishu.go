@@ -179,6 +179,80 @@ type Platform struct {
 	richCardImagePending    map[string]*richCardImageUpload
 	richCardImageFailed     map[string]struct{}
 	richCardImageUploadFunc func(context.Context, string) (string, error)
+
+	// imageBatch coalesces consecutive image messages from the same session
+	// arriving within imageBatchWindow. Without this, sending N images in rapid
+	// succession from the Feishu mobile client (which posts each as a separate
+	// message) caused the first (oldest create_time) image to be dropped by
+	// core/engine's create_time watermark (PR #1168), so only N-1 images were
+	// ever delivered to the agent (issue #1395).
+	imageBatchMu     sync.Mutex
+	imageBatch       map[string]*imageBatchEntry
+	imageBatchWindow time.Duration // quiet period before flushing a batch; 0 means use defaultImageBatchWindow
+}
+
+// defaultImageBatchWindow is the quiet period after the last image in a
+// session before the buffered batch is dispatched as a single multi-image
+// message. 500ms covers real-world mobile sending intervals (we've observed
+// ~330ms between consecutive sends from the Feishu mobile client when a user
+// taps "send" repeatedly) while remaining responsive for sequential single
+// image sends. Operators that need a longer or shorter window can override
+// it via the platform option `image_batch_window_ms`.
+const defaultImageBatchWindow = 500 * time.Millisecond
+
+// batchWindow returns the effective image-batch coalesce window for this
+// Platform. Tests and zero-initialised Platforms fall back to the default so
+// they never schedule a zero-duration timer (which would fire immediately and
+// defeat batching).
+func (p *Platform) batchWindow() time.Duration {
+	if p.imageBatchWindow > 0 {
+		return p.imageBatchWindow
+	}
+	return defaultImageBatchWindow
+}
+
+// coerceMilliseconds normalises numeric TOML values (which decode as int64 or
+// float64) into an integer millisecond count.
+func coerceMilliseconds(v any) (int64, error) {
+	switch x := v.(type) {
+	case int:
+		return int64(x), nil
+	case int32:
+		return int64(x), nil
+	case int64:
+		return x, nil
+	case uint:
+		return int64(x), nil
+	case uint32:
+		return int64(x), nil
+	case uint64:
+		return int64(x), nil
+	case float32:
+		return int64(x), nil
+	case float64:
+		return int64(x), nil
+	default:
+		return 0, fmt.Errorf("expected number, got %T", v)
+	}
+}
+
+// imageBatchEntry holds image data accumulated for one session while we wait
+// to see if more images are coming. timer is stopped and replaced on every
+// new image to coalesce the window; the pointer is captured by the timer
+// callback so an in-flight (or stale) timer can detect that its entry has
+// been superseded and exit without dispatching.
+type imageBatchEntry struct {
+	sessionKey   string
+	userID       string
+	userName     string
+	chatName     string
+	rctx         replyContext
+	quoted       quotedMessage
+	images       []core.ImageAttachment
+	messageIDs   []string
+	createTimeMs int64
+	parentID     string
+	timer        *time.Timer
 }
 
 type interactivePlatform struct {
@@ -269,6 +343,18 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 		useInteractiveCard = v
 	}
 
+	imageBatchWindow := defaultImageBatchWindow
+	if raw, ok := opts["image_batch_window_ms"]; ok {
+		ms, err := coerceMilliseconds(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: invalid image_batch_window_ms %v: %w", name, raw, err)
+		}
+		if ms < 0 {
+			return nil, fmt.Errorf("%s: image_batch_window_ms must be >= 0, got %d", name, ms)
+		}
+		imageBatchWindow = time.Duration(ms) * time.Millisecond
+	}
+
 	// Webhook mode configuration (for Lark international version)
 	port, _ := opts["port"].(string)
 	if port == "" {
@@ -310,6 +396,8 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 		callbackPath:               callbackPath,
 		encryptKey:                 encryptKey,
 		peerBots:                   peerBots,
+		imageBatch:                 make(map[string]*imageBatchEntry),
+		imageBatchWindow:           imageBatchWindow,
 	}
 	if !useInteractiveCard {
 		base.self = base
@@ -996,6 +1084,135 @@ func (p *Platform) dispatchCoreMessage(msg *core.Message) {
 	h(p.dispatchPlatform(), msg)
 }
 
+// bufferImage adds a freshly-downloaded image to the per-session batch buffer.
+// Consecutive image-only messages from the same session (same chatID + userID
+// + parentID) coalesce into a single multi-image dispatch after imageBatchWindow
+// of quiet time. A context mismatch (different parentID or userID) flushes the
+// existing batch immediately before the new one starts.
+//
+// The timer callback captures the entry pointer; flushImageBatchByRef verifies
+// the entry hasn't been superseded before dispatching, so a stale timer firing
+// after a replace or Stop will be a safe no-op.
+func (p *Platform) bufferImage(sessionKey string, entry *imageBatchEntry) {
+	p.imageBatchMu.Lock()
+	if p.imageBatch == nil {
+		// Lazy-init so tests that construct &Platform{} directly can still
+		// exercise the image path without remembering to allocate the map.
+		p.imageBatch = make(map[string]*imageBatchEntry)
+	}
+
+	// If a batch for this session exists with different context (parentID or
+	// userID), flush it first so we never mix unrelated batches.
+	var toFlush *imageBatchEntry
+	if existing, ok := p.imageBatch[sessionKey]; ok {
+		if existing.parentID != entry.parentID || existing.userID != entry.userID {
+			if existing.timer != nil {
+				existing.timer.Stop()
+			}
+			delete(p.imageBatch, sessionKey)
+			toFlush = existing
+		}
+	}
+
+	if existing, ok := p.imageBatch[sessionKey]; ok {
+		// Append into the existing batch and reset its timer.
+		if existing.timer != nil {
+			existing.timer.Stop()
+		}
+		existing.images = append(existing.images, entry.images...)
+		existing.messageIDs = append(existing.messageIDs, entry.messageIDs...)
+		if entry.createTimeMs > existing.createTimeMs {
+			existing.createTimeMs = entry.createTimeMs
+		}
+		ref := existing
+		existing.timer = time.AfterFunc(p.batchWindow(), func() {
+			p.flushImageBatchByRef(sessionKey, ref)
+		})
+	} else {
+		// Start a fresh batch with its own timer.
+		ref := entry
+		entry.timer = time.AfterFunc(p.batchWindow(), func() {
+			p.flushImageBatchByRef(sessionKey, ref)
+		})
+		p.imageBatch[sessionKey] = entry
+	}
+
+	p.imageBatchMu.Unlock()
+
+	if toFlush != nil {
+		p.dispatchImageBatchEntry(toFlush)
+	}
+}
+
+// flushImageBatchByRef dispatches the batch iff the map still points at the
+// same entry pointer (i.e. the timer wasn't superseded). Called by the
+// AfterFunc timer callback.
+func (p *Platform) flushImageBatchByRef(sessionKey string, ref *imageBatchEntry) {
+	p.imageBatchMu.Lock()
+	current, ok := p.imageBatch[sessionKey]
+	if !ok || current != ref {
+		p.imageBatchMu.Unlock()
+		return
+	}
+	if current.timer != nil {
+		current.timer.Stop()
+	}
+	delete(p.imageBatch, sessionKey)
+	p.imageBatchMu.Unlock()
+
+	p.dispatchImageBatchEntry(current)
+}
+
+// flushImageBatches synchronously dispatches any pending image batches.
+// Intended to be called from Stop() so buffered images aren't lost when
+// cc-connect shuts down.
+func (p *Platform) flushImageBatches() {
+	p.imageBatchMu.Lock()
+	pending := p.imageBatch
+	p.imageBatch = make(map[string]*imageBatchEntry)
+	p.imageBatchMu.Unlock()
+
+	for _, entry := range pending {
+		if entry.timer != nil {
+			entry.timer.Stop()
+		}
+		p.dispatchImageBatchEntry(entry)
+	}
+}
+
+// dispatchImageBatchEntry emits a single core.Message carrying all images
+// that were buffered into this batch entry. The newest create_time is used
+// as UserMessageTimeMs so the merged message preserves the user's intended
+// ordering, and the newest message_id is used as the canonical id.
+func (p *Platform) dispatchImageBatchEntry(entry *imageBatchEntry) {
+	if len(entry.images) == 0 {
+		return
+	}
+	lastIdx := len(entry.messageIDs) - 1
+	canonicalID := entry.messageIDs[lastIdx]
+	for _, mid := range entry.messageIDs {
+		if p.isMessageRecalled(mid) {
+			slog.Debug(p.tag()+": recalled image batch member dropped",
+				"message_id", mid, "batch_size", len(entry.images))
+		}
+	}
+	slog.Info(p.tag()+": dispatched image batch",
+		"session_key", entry.sessionKey,
+		"image_count", len(entry.images),
+		"message_ids", entry.messageIDs,
+	)
+	p.dispatchCoreMessage(&core.Message{
+		SessionKey: entry.sessionKey, Platform: p.platformName,
+		MessageID: canonicalID,
+		UserID:    entry.userID, UserName: entry.userName, ChatName: entry.chatName,
+		Content:           "",
+		ExtraContent:      entry.quoted.text,
+		Images:            append(entry.quoted.images, entry.images...),
+		ReplyCtx:          entry.rctx,
+		UserMessageTimeMs: entry.createTimeMs,
+	})
+}
+
 func (p *Platform) onMessageRecalled(_ context.Context, event *larkim.P2MessageRecalledV1) error {
 	if event == nil || event.Event == nil {
 		return nil
@@ -1243,11 +1460,34 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 			}
 			return
 		}
+		// Batch consecutive image-only messages from the same session into a
+		// single multi-image dispatch. Feishu mobile sends N batch-selected
+		// images as N separate events with very close create_time values;
+		// dispatching each immediately causes core/engine's create_time
+		// watermark (PR #1168) to drop the oldest image (issue #1395).
+		// We only coalesce plain image messages (no quoted context) because
+		// quoted images are usually a single image replying to a prior text.
+		if parentID == "" {
+			p.bufferImage(sessionKey, &imageBatchEntry{
+				sessionKey:   sessionKey,
+				userID:       userID,
+				userName:     userName,
+				chatName:     chatName,
+				rctx:         rctx,
+				images:       []core.ImageAttachment{{MimeType: mimeType, Data: imgData}},
+				messageIDs:   []string{messageID},
+				createTimeMs: createTimeMs,
+				parentID:     parentID,
+			})
+			return
+		}
 		p.dispatchCoreMessage(&core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
-			Images:            []core.ImageAttachment{{MimeType: mimeType, Data: imgData}},
+			Content:           "",
+			ExtraContent:      quoted.text,
+			Images:            append(quoted.images, core.ImageAttachment{MimeType: mimeType, Data: imgData}),
 			ReplyCtx:          rctx,
 			UserMessageTimeMs: createTimeMs,
 		})
@@ -4386,6 +4626,8 @@ func (p *Platform) Stop() error {
 			slog.Error(p.tag()+": webhook server shutdown error", "error", err)
 		}
 	}
+	// Flush any pending image batches so buffered images aren't lost on shutdown.
+	p.flushImageBatches()
 	return nil
 }
 
@@ -6110,7 +6352,7 @@ func buildRichCardJSONBytes(status core.CardStatus, steps []core.ToolStep, markd
 				"tag":        "markdown",
 				"content":    sanitizeCardMarkdownForCard(line),
 				"text_size":  "notation",
-				"text_color": "grey",
+
 			})
 		}
 	}

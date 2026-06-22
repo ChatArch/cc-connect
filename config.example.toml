@@ -47,6 +47,17 @@
 # 不带附件的 `cc-connect send --message` 不受影响。
 # attachment_send = "on"
 
+# Maximum size of a single attachment (in MiB) for `cc-connect send
+# --file/--image/--audio/--video` and the /send API. Default: 50 (i.e. 50 MiB).
+# Set 0 to keep the default. Raise it to send larger files; the /send request
+# body limit scales with this value to fit base64-encoded attachments.
+# Can also be overridden by the CC_MAX_ATTACHMENT_SIZE_MB env var (same MiB
+# unit; takes precedence over this option when set).
+# `cc-connect send` 单个附件的最大大小（单位 MiB）。默认 50（即 50 MiB），设 0 保持默认。
+# 调大可发送更大文件；/send 请求体上限会随之按 base64 膨胀自动放大。
+# 也可用环境变量 CC_MAX_ATTACHMENT_SIZE_MB 覆盖（同样单位 MiB；设置后优先级高于本配置项）。
+# max_attachment_size_mb = 50
+
 [log]
 level = "info" # debug, info, warn, error
 
@@ -1008,6 +1019,16 @@ app_secret = "your-feishu-app-secret"
 #                           # 进度消息展示风格：legacy（逐条消息）| compact（单消息持续更新）| card（结构化卡片）
 # resolve_mentions = false  # Auto-resolve @name in outgoing messages to Feishu at tags by matching group member names
 #                           # 自动将发出消息中的 @显示名 替换为飞书 at 标签（通过匹配群成员名称）
+# image_batch_window_ms = 500  # Coalesce window for consecutive images from the same session (default: 500ms).
+#                              # When the Feishu mobile client sends multiple images, each arrives as a separate
+#                              # event; cc-connect buffers them and dispatches a single multi-image message once
+#                              # no new image arrives within this window. Raise it (e.g. 800–1200ms) if your
+#                              # network or device routinely sends images more than 500ms apart and they still
+#                              # split into multiple agent turns; lower it for snappier single-image responses.
+#                              # 来自同一会话的连续图片消息的合批窗口（默认 500ms）。飞书手机端连续发图时每张
+#                              # 都是独立事件，cc-connect 会在窗口内将它们合并成一条多图消息再分发；如果你的
+#                              # 网络或设备发送间隔超过 500ms 且仍被拆成多轮，可调高（如 800–1200ms）；如果
+#                              # 只是单图发送，希望响应更快，也可以适当调低。
 
 # Lark (International Version) / Lark 国际版
 # Lark now supports WebSocket long-connection too; webhook mode is only needed
@@ -1127,6 +1148,19 @@ app_secret = "your-feishu-app-secret"
 # share_session_in_channel = false        # share one agent session per room / 房间内所有用户共享会话
 # group_reply_all = false                 # respond to all room messages without @mention / 群聊无需 @ 也响应
 # proxy = ""                              # optional HTTP/SOCKS5 proxy / 可选代理
+
+# Webex (Cisco) (uncomment to enable / 取消注释以启用)
+# 1. Create a bot at https://developer.webex.com/my-apps/new/bot
+#    在 https://developer.webex.com/my-apps/new/bot 创建机器人
+# 2. Copy the bot access token below / 复制 access token 到下方
+# Connection: WebSocket — no public URL required / 无需公网地址
+
+# [[projects.platforms]]
+# type = "webex"
+#
+# [projects.platforms.options]
+# token = "YOUR_WEBEX_BOT_ACCESS_TOKEN"   # from developer.webex.com (Bot)
+# allow_from = "you@cisco.com"            # comma-separated email allowlist / 逗号分隔的邮箱白名单
 
 # MAX messenger (uncomment to enable / 取消注释以启用)
 # 1. Create a bot via @MasterBot in MAX, get the access token

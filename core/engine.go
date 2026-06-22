@@ -3595,6 +3595,12 @@ func (e *Engine) getOrCreateWorkspaceAgent(workspace string) (Agent, *SessionMan
 	// workspace-specific overrides always win
 	opts["work_dir"] = workspace
 
+	if e.projectState != nil {
+		if m := e.projectState.WorkspaceModelOverride(workspace); m != "" {
+			opts["model"] = m
+		}
+	}
+
 	// Copy model from original agent if possible
 	if _, ok := opts["model"]; !ok {
 		if ma, ok := e.agent.(interface{ GetModel() string }); ok {
@@ -9172,6 +9178,7 @@ func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgModelChangeFailed, err))
 		return
 	}
+	e.persistWorkspaceModelOverride(interactiveKey, msg.SessionKey, agent, target)
 	e.cleanupInteractiveState(interactiveKey)
 
 	// Keep the existing agent session ID so the next StartSession uses
@@ -9254,7 +9261,7 @@ func (e *Engine) switchModelOnAgent(agent Agent, target string, persistConfig bo
 
 	providerSwitcher, ok := agent.(ProviderSwitcher)
 	if !ok {
-		if e.modelSaveFunc != nil {
+		if persistConfig && e.modelSaveFunc != nil {
 			if err := e.modelSaveFunc(target); err != nil {
 				return "", fmt.Errorf("save model: %w", err)
 			}
@@ -9264,7 +9271,7 @@ func (e *Engine) switchModelOnAgent(agent Agent, target string, persistConfig bo
 	}
 	active := providerSwitcher.GetActiveProvider()
 	if active == nil {
-		if e.modelSaveFunc != nil {
+		if persistConfig && e.modelSaveFunc != nil {
 			if err := e.modelSaveFunc(target); err != nil {
 				return "", fmt.Errorf("save model: %w", err)
 			}
@@ -9652,6 +9659,52 @@ func (e *Engine) stopInteractiveSessionWithOptions(sessionKey string, notifyQueu
 	agentSession := state.agentSession
 	state.mu.Unlock()
 
+	// If the agent session supports graceful turn cancellation (e.g. ACP),
+	// send a cancel notification and keep the session alive for the next
+	// user message, rather than killing the process and destroying state.
+	if canceller, ok := agentSession.(AgentSessionCanceller); ok && agentSession != nil {
+		// Keep the state in the map so the next message reuses this session.
+		// Don't markStopped — the session is still usable.
+		// Don't delete from interactiveStates — keep it alive.
+		e.interactiveMu.Unlock()
+
+		if pending != nil {
+			pending.resolve()
+		}
+		if notifyQueued {
+			e.notifyDroppedQueuedMessages(state, fmt.Errorf("session cancelled"))
+		} else {
+			state.mu.Lock()
+			state.pendingMessages = nil
+			state.mu.Unlock()
+		}
+
+		// Mark eventsNeedResync so the next turn drains stale events from
+		// the cancelled turn before processing fresh input.
+		state.mu.Lock()
+		state.eventsNeedResync = true
+		state.mu.Unlock()
+
+		cancelErr := canceller.CancelTurn()
+		if cancelErr != nil {
+			slog.Warn("agent session CancelTurn failed, falling back to Close",
+				"session_key", sessionKey, "error", cancelErr)
+			// Fall through to normal cleanup below.
+			goto normalCleanup
+		}
+
+		slog.Info("agent session turn cancelled, session kept alive",
+			"session_key", sessionKey)
+
+		e.hooks.Emit(HookEvent{
+			Event:      HookEventSessionEnded,
+			SessionKey: sessionKey,
+		})
+
+		return true
+	}
+
+normalCleanup:
 	state.markStopped()
 	delete(e.interactiveStates, sessionKey)
 	e.interactiveMu.Unlock()
@@ -11236,12 +11289,51 @@ func (e *Engine) handleModelCardAction(args, sessionKey string) *Card {
 	}
 
 	resolved, err := e.switchModelOnAgent(agent, target, agent == e.agent)
-	e.cleanupInteractiveState(e.interactiveKeyForSessionKey(sessionKey))
+	interactiveKey := e.interactiveKeyForSessionKey(sessionKey)
+	if err == nil {
+		e.persistWorkspaceModelOverride(interactiveKey, sessionKey, agent, resolved)
+	}
+	e.cleanupInteractiveState(interactiveKey)
 	if err == nil {
 		sessions.Save()
 	}
 
 	return e.renderModelSwitchResultCard(resolved, err)
+}
+
+func (e *Engine) persistWorkspaceModelOverride(interactiveKey, sessionKey string, agent Agent, model string) {
+	if e.projectState == nil || !e.multiWorkspace || model == "" {
+		return
+	}
+	if agent == e.agent {
+		return
+	}
+	workspace := workspaceModelOverrideKey(interactiveKey, sessionKey, agent)
+	if workspace == "" {
+		return
+	}
+	e.projectState.SetWorkspaceModelOverride(workspace, model)
+	e.projectState.Save()
+}
+
+func workspaceModelOverrideKey(interactiveKey, sessionKey string, agent Agent) string {
+	if wd, ok := agent.(interface{ GetWorkDir() string }); ok {
+		if dir := strings.TrimSpace(wd.GetWorkDir()); dir != "" {
+			return normalizeWorkspacePath(dir)
+		}
+	}
+	return workspaceFromInteractiveKey(interactiveKey, sessionKey)
+}
+
+func workspaceFromInteractiveKey(interactiveKey, sessionKey string) string {
+	if interactiveKey == "" || sessionKey == "" || interactiveKey == sessionKey {
+		return ""
+	}
+	suffix := ":" + sessionKey
+	if !strings.HasSuffix(interactiveKey, suffix) {
+		return ""
+	}
+	return strings.TrimSuffix(interactiveKey, suffix)
 }
 
 // executeCardAction performs the side-effect for act: prefixed actions
@@ -11810,6 +11902,8 @@ func (e *Engine) pushDeleteModeResultCard(sessionKey string) {
 func (e *Engine) performModelSwitchAsync(sessionKey string, state *interactiveState, agent Agent, sessions *SessionManager, target string) {
 	resolved, err := e.switchModelOnAgent(agent, target, agent == e.agent)
 	if err == nil {
+		interactiveKey := e.interactiveKeyForSessionKey(sessionKey)
+		e.persistWorkspaceModelOverride(interactiveKey, sessionKey, agent, resolved)
 		sessions.Save()
 	}
 
