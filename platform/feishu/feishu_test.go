@@ -98,15 +98,15 @@ func TestCreateThreadRepliesInThreadAndReturnsIsolatedTarget(t *testing.T) {
 	var sawReplyInThread bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
 			writeJSON(t, w, map[string]any{
 				"code":                0,
 				"msg":                 "success",
 				"expire":              7200,
 				"tenant_access_token": "tenant-token",
 			})
-		case r.URL.Path == "/open-apis/im/v1/messages/"+parentMessageID+"/reply":
+		case "/open-apis/im/v1/messages/" + parentMessageID + "/reply":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatalf("read body: %v", err)
