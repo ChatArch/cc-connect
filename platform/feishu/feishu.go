@@ -107,9 +107,10 @@ func init() {
 }
 
 type replyContext struct {
-	messageID  string
-	chatID     string
-	sessionKey string
+	messageID       string
+	chatID          string
+	sessionKey      string
+	seedPreviewText bool
 }
 
 type Platform struct {
@@ -3196,9 +3197,10 @@ func (p *Platform) CreateThread(ctx context.Context, rctx any) (core.ThreadTarge
 	return core.ThreadTarget{
 		SessionKey: sessionKey,
 		ReplyCtx: replyContext{
-			messageID:  messageID,
-			chatID:     rc.chatID,
-			sessionKey: sessionKey,
+			messageID:       messageID,
+			chatID:          rc.chatID,
+			sessionKey:      sessionKey,
+			seedPreviewText: true,
 		},
 	}, nil
 }
@@ -3447,6 +3449,7 @@ type feishuPreviewHandle struct {
 	mu          sync.Mutex
 	messageID   string
 	chatID      string
+	messageType string // empty/interactive = card patch path; text = text-message patch path
 	cardID      string // cardkit-v1 entity id (empty = no streaming text path)
 	sequence    int    // cardkit-v1 streaming text monotonic counter (++ before use; first call = 1)
 	status      core.CardStatus
@@ -3996,13 +3999,21 @@ func buildPreviewCardJSON(content string) string {
 // cardID stays empty in that case and the engine routes EventText through the
 // full-card Patch path (= original #657 behavior, no typewriter).
 func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content string) (any, error) {
-	if !p.useInteractiveCard {
-		return nil, core.ErrNotSupported
-	}
-
 	rc, ok := rctx.(replyContext)
 	if !ok {
 		return nil, fmt.Errorf("%s: invalid reply context type %T", p.tag(), rctx)
+	}
+	if rc.seedPreviewText {
+		if rc.messageID == "" {
+			return nil, fmt.Errorf("%s: seed preview messageID is empty", p.tag())
+		}
+		if rc.chatID == "" {
+			return nil, fmt.Errorf("%s: chatID is empty", p.tag())
+		}
+		return &feishuPreviewHandle{messageID: rc.messageID, chatID: rc.chatID, messageType: larkim.MsgTypeText}, nil
+	}
+	if !p.useInteractiveCard {
+		return nil, core.ErrNotSupported
 	}
 
 	chatID := rc.chatID
@@ -4202,13 +4213,18 @@ func (p *Platform) StreamRichCardText(ctx context.Context, previewHandle any, fu
 // UpdateMessage edits an existing card message identified by previewHandle.
 // Uses the Patch API (HTTP PATCH) which is required for interactive card messages.
 func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content string) error {
-	if !p.useInteractiveCard {
-		return core.ErrNotSupported
-	}
-
 	h, ok := previewHandle.(*feishuPreviewHandle)
 	if !ok {
 		return fmt.Errorf("%s: invalid preview handle type %T", p.tag(), previewHandle)
+	}
+	h.mu.Lock()
+	messageType := h.messageType
+	h.mu.Unlock()
+	if messageType == larkim.MsgTypeText {
+		return p.patchTextMessage(ctx, h.messageID, content)
+	}
+	if !p.useInteractiveCard {
+		return core.ErrNotSupported
 	}
 
 	cardJSON := ""
@@ -4285,6 +4301,28 @@ func (p *Platform) patchCardMessage(ctx context.Context, messageID, cardJSON str
 			}
 			if !resp.Success() {
 				return fmt.Errorf("%s: patch message code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
+			}
+			return nil
+		})
+	})
+}
+
+func (p *Platform) patchTextMessage(ctx context.Context, messageID, content string) error {
+	body, _ := json.Marshal(map[string]string{"text": content})
+	req := larkim.NewPatchMessageReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewPatchMessageReqBodyBuilder().
+			Content(string(body)).
+			Build()).
+		Build()
+	return p.withTransientRetry(ctx, "patch text message", func() error {
+		return p.withFreshTenantAccessTokenRetry(ctx, "patch text message", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
+			resp, err := client.Im.Message.Patch(ctx, req, options...)
+			if err != nil {
+				return fmt.Errorf("%s: patch text message: %w", p.tag(), err)
+			}
+			if !resp.Success() {
+				return fmt.Errorf("%s: patch text message code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
 			}
 			return nil
 		})
