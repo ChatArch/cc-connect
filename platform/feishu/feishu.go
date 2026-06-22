@@ -355,7 +355,13 @@ func (p *Platform) getBotOpenID() string {
 }
 
 func (p *Platform) KeepPreviewOnFinish() bool {
-	return p.useInteractiveCard
+	// Feishu previews are real user-visible messages that should become the
+	// final delivered response when possible. With interactive cards enabled,
+	// this keeps the card and patches it in-place. With cards disabled, the only
+	// preview path is the /thread seed text preview, which should likewise be
+	// edited into the final response instead of deleted and followed by a second
+	// message.
+	return true
 }
 
 func (p *Platform) Start(handler core.MessageHandler) error {

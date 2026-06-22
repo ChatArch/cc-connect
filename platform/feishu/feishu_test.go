@@ -160,6 +160,13 @@ func TestCreateThreadRepliesInThreadAndReturnsIsolatedTarget(t *testing.T) {
 	}
 }
 
+func TestFeishuKeepsPreviewOnFinishWhenCardsDisabled(t *testing.T) {
+	p := &Platform{useInteractiveCard: false}
+	if !p.KeepPreviewOnFinish() {
+		t.Fatal("KeepPreviewOnFinish() = false, want true so /thread seed previews are edited instead of deleted")
+	}
+}
+
 func TestCreateThreadSeedCanBeReusedAsEditablePreview(t *testing.T) {
 	const appID = "cli_thread_seed_preview"
 	const appSecret = "secret-thread-seed-preview"
