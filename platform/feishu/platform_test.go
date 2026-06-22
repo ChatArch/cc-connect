@@ -764,7 +764,7 @@ func TestLark_ThreadIsolationUsesRootSessionKey(t *testing.T) {
 	}
 }
 
-func TestLark_CreatedThreadRoutesFollowupsWhenThreadIsolationDisabled(t *testing.T) {
+func TestLark_CreatedThreadRoutesP2PFollowupsWhenThreadIsolationDisabled(t *testing.T) {
 	p, err := newPlatform("lark", lark.LarkBaseUrl, map[string]any{
 		"app_id": "cli_xxx", "app_secret": "secret", "enable_feishu_card": true, "thread_isolation": false,
 	})
@@ -778,7 +778,7 @@ func TestLark_CreatedThreadRoutesFollowupsWhenThreadIsolationDisabled(t *testing
 	threadID := "omt_created"
 	openID := "ou_test"
 	msgType := "text"
-	chatType := "group"
+	chatType := "p2p"
 	senderType := "user"
 	createText := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	threadKey := "lark:oc_test:root:omt_created"

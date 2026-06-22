@@ -3103,20 +3103,19 @@ func (p *Platform) isCreatedThreadSession(sessionKey string) bool {
 // TODO: Session-key derivation and reply-thread behavior are split across multiple code paths here.
 // Should revisit thread/root handling without changing thread_isolation=false behavior.
 func (p *Platform) makeSessionKey(msg *larkim.EventMessage, chatID, userID string) string {
-	if msg != nil && stringValue(msg.ChatType) == "group" {
-		rootID := messageThreadRootID(msg)
-		if p.threadIsolation {
-			if rootID == "" {
-				rootID = stringValue(msg.MessageId)
-			}
-			if rootID != "" {
-				return p.threadSessionKey(chatID, rootID)
-			}
-		} else if rootID != "" {
-			sessionKey := p.threadSessionKey(chatID, rootID)
-			if p.isCreatedThreadSession(sessionKey) {
-				return sessionKey
-			}
+	if rootID := messageThreadRootID(msg); rootID != "" {
+		sessionKey := p.threadSessionKey(chatID, rootID)
+		if p.isCreatedThreadSession(sessionKey) {
+			return sessionKey
+		}
+		if p.threadIsolation && msg != nil && stringValue(msg.ChatType) == "group" {
+			return sessionKey
+		}
+	}
+	if p.threadIsolation && msg != nil && stringValue(msg.ChatType) == "group" {
+		rootID := stringValue(msg.MessageId)
+		if rootID != "" {
+			return p.threadSessionKey(chatID, rootID)
 		}
 	}
 	if p.shareSessionInChannel {
