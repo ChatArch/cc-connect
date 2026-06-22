@@ -3108,15 +3108,6 @@ func (p *Platform) makeSessionKey(msg *larkim.EventMessage, chatID, userID strin
 		if p.isCreatedThreadSession(sessionKey) {
 			return sessionKey
 		}
-		if p.threadIsolation && msg != nil && stringValue(msg.ChatType) == "group" {
-			return sessionKey
-		}
-	}
-	if p.threadIsolation && msg != nil && stringValue(msg.ChatType) == "group" {
-		rootID := stringValue(msg.MessageId)
-		if rootID != "" {
-			return p.threadSessionKey(chatID, rootID)
-		}
 	}
 	if p.shareSessionInChannel {
 		return fmt.Sprintf("%s:%s", p.tag(), chatID)
@@ -3140,7 +3131,7 @@ func (p *Platform) shouldReplyInThread(rc replyContext) bool {
 	if rc.messageID == "" {
 		return false
 	}
-	return isThreadSessionKey(rc.sessionKey)
+	return p.isCreatedThreadSession(rc.sessionKey)
 }
 
 // shouldUseThreadOrReplyAPI is true when we should call Im.Message.Reply (optionally with ReplyInThread).
