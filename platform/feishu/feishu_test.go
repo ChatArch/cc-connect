@@ -90,7 +90,7 @@ func TestDispatchMessageDropsRecalledMessageBeforeHandler(t *testing.T) {
 
 func TestCreateThreadRepliesInThreadAndReturnsIsolatedTarget(t *testing.T) {
 	const appID = "cli_thread_create"
-	const appSecret = "secret-thread-create"
+	const appSecret = "dummy"
 	const parentMessageID = "om_parent"
 	const chatID = "oc_chat"
 	const threadID = "omt_created"
