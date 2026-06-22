@@ -7024,6 +7024,7 @@ func TestHandlePendingPermission_CronFallback(t *testing.T) {
 // controllableAgentSession is an AgentSession stub whose session ID, liveness,
 // and events channel can be controlled by the test.
 type controllableAgentSession struct {
+	mu              sync.Mutex
 	sessionID       string
 	alive           bool
 	events          chan Event
@@ -7061,9 +7062,15 @@ func (s *controllableAgentSession) GetUsage(_ context.Context) (*UsageReport, er
 	return s.report, s.usageErr
 }
 func (s *controllableAgentSession) GetContextUsage() *ContextUsage { return s.contextUsage }
-func (s *controllableAgentSession) Alive() bool                    { return s.alive }
+func (s *controllableAgentSession) Alive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.alive
+}
 func (s *controllableAgentSession) Close() error {
+	s.mu.Lock()
 	s.alive = false
+	s.mu.Unlock()
 	close(s.events)
 	select {
 	case <-s.closed:
@@ -8257,7 +8264,9 @@ func newBlockingCloseSession(id string) *blockingCloseAgentSession {
 }
 
 func (s *blockingCloseAgentSession) Close() error {
+	s.mu.Lock()
 	s.alive = false
+	s.mu.Unlock()
 	select {
 	case s.closeStarted <- struct{}{}:
 	default:
