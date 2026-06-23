@@ -446,7 +446,7 @@ Commands:
 
 Install flags:
   --config PATH         Path to config.toml (uses its parent as work dir)
-  --log-file PATH       Log file path (default: ~/.cc-connect/logs/cc-connect.log)
+  --log-file PATH       Log file path (default: ~/.chatarch/cc-connect/logs/cc-connect.log)
   --log-max-size N      Max log file size in MB (default: 10)
   --work-dir DIR        Directory containing config.toml (default: current dir)
   --force               Overwrite existing installation

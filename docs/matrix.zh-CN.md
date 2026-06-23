@@ -205,13 +205,13 @@ allow_from = "@alice:matrix.org,@bob:matrix.org"
 
 cc-connect 需要使用 `goolm` build tag 编译才能支持加密房间（E2EE）。启动时如果看到 `matrix: E2EE enabled`，说明加密功能正常。如果看到 `matrix: E2EE not available (build with -tags goolm to enable)`，需要重新编译：
 
-> **数据存储**：E2EE 加密数据存储在 `~/.cc-connect/` 目录下（目录权限为 `0700`）：
+> **数据存储**：E2EE 加密数据存储在 `~/.chatarch/cc-connect/` 目录下（目录权限为 `0700`）：
 > - `matrix-crypto-<device_id>.db` — 加密密钥数据库（每个设备一个）
 > - `matrix-cross-signing-<device_id>.json` — 跨签名种子文件（每个设备一个）
 >
 > 如需重置 E2EE（例如更换设备或重新安装），删除这些文件后重启 cc-connect 即可：
 > ```bash
-> rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json
+> rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json
 > ```
 
 ```bash
@@ -225,8 +225,8 @@ go build -tags goolm ./cmd/cc-connect
 可能原因和解决方案：
 
 1. **`device ID not available from whoami`** — 服务器未返回 device ID。请使用 curl 创建带 `device_id` 的专用设备。
-2. **`not marked as shared, but there are keys on the server`** — 旧的加密数据与当前设备冲突。cc-connect 会自动尝试修复。如果持续失败，删除旧的加密数据库和跨签名种子：`rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json`
-3. **`mismatching device ID in client and crypto store`** — token 对应的 device ID 与加密数据库不匹配。删除数据库和种子文件：`rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json`
+2. **`not marked as shared, but there are keys on the server`** — 旧的加密数据与当前设备冲突。cc-connect 会自动尝试修复。如果持续失败，删除旧的加密数据库和跨签名种子：`rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json`
+3. **`mismatching device ID in client and crypto store`** — token 对应的 device ID 与加密数据库不匹配。删除数据库和种子文件：`rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json`
 
 #### 日志显示 "decrypt failed: no session found"？
 
@@ -234,7 +234,7 @@ go build -tags goolm ./cmd/cc-connect
 
 1. **复用了 Element 的 access token** — Element 的设备 ID 和 bot 的加密密钥冲突。请使用 curl 创建专用设备（见第 2 步）。
 2. **刚更换了 access token** — 对方客户端可能还没发现 bot 的新设备。等待 1-2 分钟后重新发送消息。
-3. **加密数据库损坏** — 删除数据库和种子文件后重启：`rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json`
+3. **加密数据库损坏** — 删除数据库和种子文件后重启：`rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json`
 
 #### 如何获取专用的 access token（推荐方式）？
 

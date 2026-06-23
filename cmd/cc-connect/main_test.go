@@ -122,6 +122,58 @@ func TestApplyProjectStateOverride(t *testing.T) {
 	}
 }
 
+func TestResolveConfigPathSkipsCodexConfigInCurrentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	cwd := filepath.Join(dir, "cwd")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	codexConfig := `model_provider = "crs"
+preferred_auth_method = "token"
+
+[model_providers.crs]
+name = "crs"
+
+[projects."/home/zhihong"]
+trust_level = "trusted"
+`
+	if err := os.WriteFile(filepath.Join(cwd, "config.toml"), []byte(codexConfig), 0o644); err != nil {
+		t.Fatalf("write codex config: %v", err)
+	}
+
+	want := filepath.Join(home, ".chatarch", "cc-connect", "config.toml")
+	if got := resolveConfigPath(""); got != want {
+		t.Fatalf("resolveConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveConfigPathKeepsCCConnectConfigInCurrentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Chdir(dir)
+
+	ccConnectConfig := `[[projects]]
+name = "demo"
+
+[projects.agent]
+type = "codex"
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(ccConnectConfig), 0o644); err != nil {
+		t.Fatalf("write cc-connect config: %v", err)
+	}
+
+	if got := resolveConfigPath(""); got != "config.toml" {
+		t.Fatalf("resolveConfigPath() = %q, want config.toml", got)
+	}
+}
+
 type stubProviderRefreshAgent struct {
 	stubMainAgent
 	providers  []core.ProviderConfig

@@ -83,8 +83,15 @@ var configMu sync.Mutex
 // ConfigPath stores the path to the config file for saving
 var ConfigPath string
 
+func defaultDataDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".chatarch", "cc-connect")
+	}
+	return filepath.Join(".chatarch", "cc-connect")
+}
+
 type Config struct {
-	DataDir        string `toml:"data_dir"` // session store directory, default ~/.cc-connect
+	DataDir        string `toml:"data_dir"` // session store directory, default ~/.chatarch/cc-connect
 	AttachmentSend string `toml:"attachment_send"`
 	// Quiet is legacy: when true and [display] does not set thinking_messages / tool_messages,
 	// engines behave as if those flags were false. Per-project quiet overrides when set.
@@ -618,11 +625,7 @@ func load(path string) (*Config, error) {
 	}
 	resolveEnvInConfig(cfg)
 	if cfg.DataDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			cfg.DataDir = filepath.Join(home, ".cc-connect")
-		} else {
-			cfg.DataDir = ".cc-connect"
-		}
+		cfg.DataDir = defaultDataDir()
 	}
 	cfg.AttachmentSend = strings.ToLower(strings.TrimSpace(cfg.AttachmentSend))
 	if cfg.AttachmentSend == "" {

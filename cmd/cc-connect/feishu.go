@@ -121,6 +121,10 @@ func runFeishuSetup(args []string, requestedMode string) {
 	_ = fs.Parse(args)
 
 	initConfigPath(*configFile)
+	if err := ensureConfigFileExists(config.ConfigPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	effectiveMode, resolvedAppID, resolvedAppSecret, err := resolveFeishuSetupInputs(
 		requestedMode,
@@ -448,6 +452,22 @@ func resolveTargetProject(project string) (string, error) {
 		sort.Strings(projects)
 		return "", fmt.Errorf("multiple projects found, please specify --project (%s)", strings.Join(projects, ", "))
 	}
+}
+
+func ensureConfigFileExists(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("config path not set")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat config %s: %w", path, err)
+	}
+	if err := bootstrapConfig(path); err != nil {
+		return fmt.Errorf("create config %s: %w", path, err)
+	}
+	fmt.Printf("Created default config at %s\n", path)
+	return nil
 }
 
 func normalizeFeishuPlatformType(raw string) (string, error) {

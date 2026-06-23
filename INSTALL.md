@@ -110,16 +110,16 @@ qodercli --version
 If you prefer manual configuration, cc-connect looks for config in this order:
 1. `-config <path>` flag (explicit)
 2. `./config.toml` (current directory)
-3. `~/.cc-connect/config.toml` (global, **recommended**)
+3. `~/.chatarch/cc-connect/config.toml` (global, **recommended**)
 
-If no config file exists, running `cc-connect` will auto-create a starter template at `~/.cc-connect/config.toml`.
+If no config file exists, running `cc-connect` will auto-create a starter template at `~/.chatarch/cc-connect/config.toml`.
 
 **Manual config location:**
 
 ```bash
-mkdir -p ~/.cc-connect
+mkdir -p ~/.chatarch/cc-connect
 # If you cloned the repo, copy the example:
-cp config.example.toml ~/.cc-connect/config.toml
+cp config.example.toml ~/.chatarch/cc-connect/config.toml
 # Or just run cc-connect once — it will create a starter config automatically
 ```
 
@@ -748,13 +748,13 @@ You can run cc-connect as a daemon managed by the OS init system (Linux systemd 
 ### Install the daemon
 
 ```bash
-cc-connect daemon install --config ~/.cc-connect/config.toml
+cc-connect daemon install --config ~/.chatarch/cc-connect/config.toml
 ```
 
 You can also point the daemon at the directory that contains `config.toml`:
 
 ```bash
-cc-connect daemon install --work-dir ~/.cc-connect
+cc-connect daemon install --work-dir ~/.chatarch/cc-connect
 ```
 
 Optional flags: `--config PATH`, `--log-file PATH`, `--log-max-size N` (MB), `--work-dir DIR`, `--force` (overwrite existing unit). `--config` points to a config file, while `--work-dir` points to the directory containing `config.toml`.
@@ -774,7 +774,7 @@ After enabling linger, `user@UID.service` remains active even when you log out. 
 Alternatively, you can install as a system-level service (requires root):
 
 ```bash
-sudo cc-connect daemon install --config ~/.cc-connect/config.toml
+sudo cc-connect daemon install --config ~/.chatarch/cc-connect/config.toml
 ```
 
 System-level services are independent of login sessions.
@@ -801,7 +801,7 @@ Logs auto-rotate at the configured max size and keep one backup.
 
 On Windows, `daemon install` creates a native Task Scheduler task named `cc-connect`.
 The task runs at user logon and is also started immediately after installation. The
-installer writes a small PowerShell launcher under `~/.cc-connect` so the scheduled
+installer writes a small PowerShell launcher under `~/.chatarch/cc-connect` so the scheduled
 task uses the selected config directory, log file, PATH, and proxy environment.
 
 ### Uninstall

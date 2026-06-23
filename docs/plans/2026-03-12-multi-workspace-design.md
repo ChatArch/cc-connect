@@ -43,7 +43,7 @@ When a message arrives in a channel:
 
 ### Binding Storage
 
-Persisted in `~/.cc-connect/workspace_bindings.json`:
+Persisted in `~/.chatarch/cc-connect/workspace_bindings.json`:
 
 ```json
 {

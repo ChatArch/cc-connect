@@ -41,6 +41,18 @@ var (
 // previous behavior of always continuing the prior session.
 const defaultResetOnIdleMins = 0
 
+const (
+	defaultAppParentDir = ".chatarch"
+	defaultAppDir       = "cc-connect"
+)
+
+func defaultAppHomeDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, defaultAppParentDir, defaultAppDir)
+	}
+	return filepath.Join(defaultAppParentDir, defaultAppDir)
+}
+
 // resolveResetOnIdle returns the configured reset-on-idle duration for a
 // project, applying defaultResetOnIdleMins when the field is unset. The second
 // return value indicates whether the default was applied, so the caller can
@@ -252,7 +264,7 @@ func main() {
 		slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	}
 
-	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.cc-connect/config.toml)")
+	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.chatarch/cc-connect/config.toml)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	observeFlag := flag.Bool("observe", false, "observe native terminal Claude Code sessions and forward to Slack")
 	observeChannel := flag.String("observe-channel", "", "Slack channel ID to forward terminal observations to (requires --observe)")
@@ -1452,18 +1464,45 @@ func resolveClaudeProjectDir(workDir string) string {
 }
 
 // resolveConfigPath determines which config file to use.
-// Priority: explicit flag → ./config.toml → ~/.cc-connect/config.toml
+// Priority: explicit flag -> ./config.toml -> ~/.chatarch/cc-connect/config.toml.
+// When running from $HOME, ./config.toml is often Codex CLI's config; do not
+// treat that file as a cc-connect config just because the basename matches.
 func resolveConfigPath(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
 	if _, err := os.Stat("config.toml"); err == nil {
-		return "config.toml"
+		if !isLikelyCodexConfig("config.toml") {
+			return "config.toml"
+		}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cc-connect", "config.toml")
+	return filepath.Join(defaultAppHomeDir(), "config.toml")
+}
+
+func isLikelyCodexConfig(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
 	}
-	return "config.toml"
+	var hasCodexProjects, hasProjectsArray, hasCodexSetting bool
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[[projects]]") {
+			hasProjectsArray = true
+			continue
+		}
+		if strings.HasPrefix(line, "[projects.") {
+			hasCodexProjects = true
+			continue
+		}
+		if strings.HasPrefix(line, "model_provider") || strings.HasPrefix(line, "preferred_auth_method") || strings.HasPrefix(line, "[model_providers.") {
+			hasCodexSetting = true
+		}
+	}
+	return hasCodexProjects && hasCodexSetting && !hasProjectsArray
 }
 
 func bootstrapConfig(path string) error {
@@ -1532,7 +1571,7 @@ Usage:
   cc-connect <command> [args]
 
 Flags:
-  --config <path>    Path to config file (default: ./config.toml or ~/.cc-connect/config.toml)
+  --config <path>    Path to config file (default: ./config.toml or ~/.chatarch/cc-connect/config.toml)
   --force            Kill any existing instance with the same config before starting
   --version          Print version and exit
   --help             Show this help message

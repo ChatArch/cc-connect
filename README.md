@@ -300,9 +300,9 @@ make build
 If you prefer manual configuration:
 
 ```bash
-mkdir -p ~/.cc-connect
-cp config.example.toml ~/.cc-connect/config.toml
-vim ~/.cc-connect/config.toml
+mkdir -p ~/.chatarch/cc-connect
+cp config.example.toml ~/.chatarch/cc-connect/config.toml
+vim ~/.chatarch/cc-connect/config.toml
 ```
 
 Set `admin_from = "alice,bob"` in a project to allow those user IDs to run privileged commands such as `/dir` and `/shell`.

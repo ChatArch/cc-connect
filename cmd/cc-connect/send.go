@@ -327,10 +327,7 @@ func resolveSocketPath(dataDir string) string {
 	if envDataDir := strings.TrimSpace(os.Getenv("CC_DATA_DIR")); envDataDir != "" {
 		return filepath.Join(envDataDir, "run", "api.sock")
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cc-connect", "run", "api.sock")
-	}
-	return filepath.Join(".cc-connect", "run", "api.sock")
+	return filepath.Join(defaultAppHomeDir(), "run", "api.sock")
 }
 
 func printSendUsage() {
@@ -358,7 +355,7 @@ Options:
       --at-all             @ everyone (DingTalk)
   -p, --project <name>     Target project (optional if only one project)
   -s, --session <key>      Target session key (optional, picks first active)
-      --data-dir <path>    Data directory (default: ~/.cc-connect)
+      --data-dir <path>    Data directory (default: ~/.chatarch/cc-connect)
   -h, --help               Show this help
 
 Examples:

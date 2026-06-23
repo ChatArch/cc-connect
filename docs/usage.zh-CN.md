@@ -859,7 +859,7 @@ cc-connect relay send --to gemini "你觉得这个架构怎么样？"
 后台服务运行。
 
 ```bash
-cc-connect daemon install --config ~/.cc-connect/config.toml
+cc-connect daemon install --config ~/.chatarch/cc-connect/config.toml
 cc-connect daemon start
 cc-connect daemon stop
 cc-connect daemon restart
