@@ -142,10 +142,7 @@ func resolveDataDir(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cc-connect")
-	}
-	return ".cc-connect"
+	return defaultAppHomeDir()
 }
 
 func loadAllSessions(dataDir string) ([]sessionRecord, error) {
@@ -430,7 +427,7 @@ Commands:
   prune [project] [--merge]  Remove duplicate sessions per chat
 
 Options:
-  --data-dir <path>  Data directory (default: ~/.cc-connect)
+  --data-dir <path>  Data directory (default: ~/.chatarch/cc-connect)
   -h, --help         Show this help
 
 Session ID formats for 'show':

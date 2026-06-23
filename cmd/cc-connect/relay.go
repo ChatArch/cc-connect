@@ -145,7 +145,7 @@ Options:
   -t, --to <project>         Target bot project name
   -s, --session-key <key>    Session key (auto-detected from CC_SESSION_KEY env)
   -m, --message <text>       Message to send
-      --data-dir <path>      Data directory (default: ~/.cc-connect)
+      --data-dir <path>      Data directory (default: ~/.chatarch/cc-connect)
   -h, --help                 Show this help
 
 Examples:

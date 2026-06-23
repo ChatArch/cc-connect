@@ -299,9 +299,9 @@ make build
 如果你更喜欢手动配置：
 
 ```bash
-mkdir -p ~/.cc-connect
-cp config.example.toml ~/.cc-connect/config.toml
-vim ~/.cc-connect/config.toml
+mkdir -p ~/.chatarch/cc-connect
+cp config.example.toml ~/.chatarch/cc-connect/config.toml
+vim ~/.chatarch/cc-connect/config.toml
 ```
 
 在项目配置里设置 `admin_from = "alice,bob"` 后，只有这些用户 ID 才能执行 `/dir`、`/shell` 等特权命令。

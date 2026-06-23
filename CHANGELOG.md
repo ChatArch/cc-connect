@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- **Feishu setup config collision**: `cc-connect feishu setup` no longer treats a Codex CLI `./config.toml` as a cc-connect config. The default global cc-connect home now lives under `~/.chatarch/cc-connect`, and setup bootstraps that config path when missing.
 - **Skill discovery depth-1 only**: skill scanning no longer recurses into subdirectories. Only `<skill_dir>/<name>/SKILL.md` is registered; nested SKILL.md files (e.g. inside `<name>/references/...`) are treated as skill assets and ignored, matching the Claude Code CLI convention. Previously, nested SKILL.md files leaked into platform command menus as phantom slash commands (101 leaked commands from `frontend-design` skill alone) (#1304).
 
 ## v1.3.3 (2026-06-15)

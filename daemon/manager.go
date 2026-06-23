@@ -61,16 +61,16 @@ func NewManager() (Manager, error) {
 
 func DefaultLogFile() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cc-connect", "logs", "cc-connect.log")
+	return filepath.Join(home, ".chatarch", "cc-connect", "logs", "cc-connect.log")
 }
 
 func DefaultDataDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cc-connect")
+	return filepath.Join(home, ".chatarch", "cc-connect")
 }
 
 // ── Metadata ────────────────────────────────────────────────
-// Stored at ~/.cc-connect/daemon.json so that `logs`, `status`,
+// Stored at ~/.chatarch/cc-connect/daemon.json so that `logs`, `status`,
 // etc. can locate the log file without parsing service definitions.
 
 type Meta struct {

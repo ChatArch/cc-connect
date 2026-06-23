@@ -415,7 +415,7 @@ Options:
       --session-mode <mode>  reuse (default) or new-per-run
       --timeout-mins <n>     Max minutes to wait per run (0 = no limit; default 30)
       --mute                 Suppress all messages (start + result)
-      --data-dir <path>      Data directory (default: ~/.cc-connect)
+      --data-dir <path>      Data directory (default: ~/.chatarch/cc-connect)
   -h, --help                 Show this help
 
 Examples:

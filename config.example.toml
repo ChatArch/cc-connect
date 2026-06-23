@@ -34,9 +34,9 @@
 # 初始化命令，会添加到每条 shell 命令前面。用于加载 profile，使自定义函数和别名可用。
 # shell_profile = "source ~/.zshrc"
 
-# Session data storage directory (default: ~/.cc-connect)
+# Session data storage directory (default: ~/.chatarch/cc-connect)
 # Stores conversation history and session state as JSON files.
-# 会话数据存储目录（默认 ~/.cc-connect），以 JSON 文件保存对话历史和会话状态。
+# 会话数据存储目录（默认 ~/.chatarch/cc-connect），以 JSON 文件保存对话历史和会话状态。
 # data_dir = "/path/to/custom/dir"
 
 # Attachment send-back switch for `cc-connect send --image/--file`.
@@ -490,7 +490,7 @@ level = "info" # debug, info, warn, error
 # # 备选：MiniMax TTS（T2A v2 流式 API）
 # # Docs: https://platform.minimaxi.com/document/T2A%20V2
 # [tts.minimax]
-# api_key  = "your-minimax-api-key" # optional: if empty, cc-connect reads ~/.cc-connect/config/minimax.json
+# api_key  = "your-minimax-api-key" # optional: if empty, cc-connect reads ~/.chatarch/cc-connect/config/minimax.json
 # base_url = ""              # optional: default "https://api.minimaxi.com" / 留空使用默认地址
 # model    = "speech-2.8-hd" # "speech-2.8-hd" | "speech-2.8"
 # config_file = ""           # optional MiniMax JSON config path; default data_dir/config/minimax.json

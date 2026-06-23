@@ -205,13 +205,13 @@ Make sure `auto_join = true` (this is the default). If the bot was already invit
 
 cc-connect supports encrypted rooms (E2EE) when built with the `goolm` build tag. If you see `matrix: E2EE enabled` at startup, encryption is working. If you see `matrix: E2EE not available (build with -tags goolm to enable)`, rebuild with E2EE support:
 
-> **Data storage**: E2EE crypto data is stored under `~/.cc-connect/` (created with `0700` permissions):
+> **Data storage**: E2EE crypto data is stored under `~/.chatarch/cc-connect/` (created with `0700` permissions):
 > - `matrix-crypto-<device_id>.db` — encryption key database (one per device)
 > - `matrix-cross-signing-<device_id>.json` — cross-signing seed (one per device)
 >
 > To reset E2EE (e.g. after changing device or reinstalling), delete these files and restart cc-connect:
 > ```bash
-> rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json
+> rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json
 > ```
 
 ```bash
@@ -225,8 +225,8 @@ go build -tags goolm ./cmd/cc-connect
 Possible causes and fixes:
 
 1. **`device ID not available from whoami`** — The server didn't return a device ID. Create a dedicated device via curl with `device_id`.
-2. **`not marked as shared, but there are keys on the server`** — Old crypto data conflicts with the current device. cc-connect tries to auto-recover. If it persists, delete old crypto databases and cross-signing seeds: `rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json`
-3. **`mismatching device ID in client and crypto store`** — The token's device ID doesn't match the crypto database. Delete the database and seeds: `rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json`
+2. **`not marked as shared, but there are keys on the server`** — Old crypto data conflicts with the current device. cc-connect tries to auto-recover. If it persists, delete old crypto databases and cross-signing seeds: `rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json`
+3. **`mismatching device ID in client and crypto store`** — The token's device ID doesn't match the crypto database. Delete the database and seeds: `rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json`
 
 #### Logs show "decrypt failed: no session found"?
 
@@ -234,7 +234,7 @@ The sender's client didn't send the encryption key to the bot's device. This usu
 
 1. **Reusing Element's access token** — Element's device ID conflicts with the bot's encryption keys. Create a dedicated device via curl (see Step 2).
 2. **Just changed the access token** — The sender's client may not have discovered the bot's new device yet. Wait 1-2 minutes and send a new message.
-3. **Corrupted crypto database** — Delete and restart: `rm ~/.cc-connect/matrix-crypto-*.db* ~/.cc-connect/matrix-cross-signing-*.json`
+3. **Corrupted crypto database** — Delete and restart: `rm ~/.chatarch/cc-connect/matrix-crypto-*.db* ~/.chatarch/cc-connect/matrix-cross-signing-*.json`
 
 #### How to get a dedicated access token (recommended)?
 

@@ -501,7 +501,7 @@ func TestLoad_DefaultsDataDir(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	want := filepath.Join(dir, ".cc-connect")
+	want := filepath.Join(dir, ".chatarch", "cc-connect")
 	if cfg.DataDir != want {
 		t.Fatalf("Load() data_dir = %q, want %q", cfg.DataDir, want)
 	}
