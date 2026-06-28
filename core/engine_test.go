@@ -74,16 +74,32 @@ func (p *stubPlatformEngine) Stop() error { return nil }
 
 type threadCreatingPlatform struct {
 	stubPlatformEngine
-	createCalls  int
-	lastReplyCtx any
-	result       ThreadTarget
-	err          error
+	createCalls   int
+	lastReplyCtx  any
+	result        ThreadTarget
+	err           error
+	cleanupCalls []any
 }
 
 func (p *threadCreatingPlatform) CreateThread(ctx context.Context, replyCtx any) (ThreadTarget, error) {
 	p.createCalls++
 	p.lastReplyCtx = replyCtx
 	return p.result, p.err
+}
+
+func (p *threadCreatingPlatform) DeletePreviewMessage(_ context.Context, handle any) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cleanupCalls = append(p.cleanupCalls, handle)
+	return nil
+}
+
+func (p *threadCreatingPlatform) cleanupSnapshot() []any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]any, len(p.cleanupCalls))
+	copy(out, p.cleanupCalls)
+	return out
 }
 
 type typingRecorderPlatform struct {
@@ -2581,8 +2597,9 @@ func TestCmdThreadCreatesIsolatedSessionWithoutTouchingParent(t *testing.T) {
 	p := &threadCreatingPlatform{
 		stubPlatformEngine: stubPlatformEngine{n: "test"},
 		result: ThreadTarget{
-			SessionKey: "test:chat:root:thread-1",
-			ReplyCtx:   "thread-ctx",
+			SessionKey:    "test:chat:root:thread-1",
+			ReplyCtx:      "thread-ctx",
+			CleanupHandle: "seed-handle",
 		},
 	}
 	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
@@ -2619,6 +2636,10 @@ func TestCmdThreadCreatesIsolatedSessionWithoutTouchingParent(t *testing.T) {
 	if threadID := e.sessions.ActiveSessionID("test:chat:root:thread-1"); threadID == "" {
 		t.Fatal("thread session was not created")
 	}
+	waitForCondition(t, 2*time.Second, func() bool {
+		calls := p.cleanupSnapshot()
+		return len(calls) == 1 && calls[0] == "seed-handle"
+	}, "thread seed cleanup was not called")
 }
 
 func TestCmdThreadDoesNotInterruptBusyParentSession(t *testing.T) {
