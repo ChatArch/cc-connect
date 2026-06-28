@@ -3438,6 +3438,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	if e.ctx.Err() != nil {
 		return
 	}
+	defer e.cleanupMessageHandle(p, msg.CleanupHandle)
 
 	turnStart := time.Now()
 
@@ -5916,7 +5917,21 @@ func (e *Engine) cmdThread(p Platform, msg *Message, args []string) {
 	threadMsg.Audio = nil
 	threadMsg.ExtraContent = ""
 	threadMsg.Recalled = false
+	threadMsg.CleanupHandle = target.CleanupHandle
 	e.handleMessage(p, &threadMsg)
+}
+
+func (e *Engine) cleanupMessageHandle(p Platform, handle any) {
+	if handle == nil {
+		return
+	}
+	cleaner, ok := p.(PreviewCleaner)
+	if !ok {
+		return
+	}
+	if err := cleaner.DeletePreviewMessage(e.ctx, handle); err != nil && !errors.Is(err, ErrNotSupported) {
+		slog.Warn("post-turn cleanup failed", "platform", p.Name(), "error", err)
+	}
 }
 
 // matchPrefix finds a unique command matching the given prefix.

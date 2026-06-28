@@ -28,8 +28,9 @@ type ReplyContextReconstructor interface {
 // ThreadTarget identifies the newly-created platform thread/topic lane that
 // should receive the prompt from a /thread command.
 type ThreadTarget struct {
-	SessionKey string
-	ReplyCtx   any
+	SessionKey    string
+	ReplyCtx      any
+	CleanupHandle any
 }
 
 // ThreadCreator is an optional platform capability for creating a native

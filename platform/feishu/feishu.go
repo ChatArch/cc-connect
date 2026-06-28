@@ -3212,18 +3212,20 @@ func (p *Platform) CreateThread(ctx context.Context, rctx any) (core.ThreadTarge
 		return core.ThreadTarget{}, fmt.Errorf("%s: create thread returned no thread id", p.tag())
 	}
 	messageID := stringValue(resp.Data.MessageId)
-	if messageID == "" {
-		messageID = rc.messageID
-	}
 	sessionKey := p.threadSessionKey(rc.chatID, threadID)
 	p.markCreatedThreadSession(sessionKey)
+	var cleanupHandle any
+	if messageID != "" && messageID != rc.messageID {
+		cleanupHandle = &feishuPreviewHandle{messageID: messageID, chatID: rc.chatID}
+	}
 	return core.ThreadTarget{
 		SessionKey: sessionKey,
 		ReplyCtx: replyContext{
-			messageID:  messageID,
+			messageID:  rc.messageID,
 			chatID:     rc.chatID,
 			sessionKey: sessionKey,
 		},
+		CleanupHandle: cleanupHandle,
 	}, nil
 }
 
@@ -4392,10 +4394,6 @@ func (p *Platform) Stop() error {
 // DeletePreviewMessage removes a preview message so the caller can send a
 // separate final message without leaving a stale interactive card behind.
 func (p *Platform) DeletePreviewMessage(ctx context.Context, previewHandle any) error {
-	if !p.useInteractiveCard {
-		return core.ErrNotSupported
-	}
-
 	h, ok := previewHandle.(*feishuPreviewHandle)
 	if !ok {
 		return fmt.Errorf("%s: invalid preview handle type %T", p.tag(), previewHandle)

@@ -96,6 +96,7 @@ func TestCreateThreadRepliesInThreadAndReturnsIsolatedTarget(t *testing.T) {
 	const threadID = "omt_created"
 
 	var sawReplyInThread bool
+	var sawSeedDelete bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -123,8 +124,14 @@ func TestCreateThreadRepliesInThreadAndReturnsIsolatedTarget(t *testing.T) {
 					"thread_id":  threadID,
 				},
 			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/open-apis/im/v1/messages/om_seed":
+			sawSeedDelete = true
+			writeJSON(t, w, map[string]any{
+				"code": 0,
+				"msg":  "success",
+			})
 		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
+			t.Fatalf("unexpected %s path %s", r.Method, r.URL.Path)
 		}
 	}))
 	defer srv.Close()
@@ -155,8 +162,17 @@ func TestCreateThreadRepliesInThreadAndReturnsIsolatedTarget(t *testing.T) {
 	if target.SessionKey != "feishu:oc_chat:root:omt_created" {
 		t.Fatalf("SessionKey = %q, want feishu:oc_chat:root:omt_created", target.SessionKey)
 	}
-	if rc, ok := target.ReplyCtx.(replyContext); !ok || rc.messageID != "om_seed" || rc.chatID != chatID || rc.sessionKey != target.SessionKey {
-		t.Fatalf("ReplyCtx = %#v, want seed replyContext for target", target.ReplyCtx)
+	if rc, ok := target.ReplyCtx.(replyContext); !ok || rc.messageID != parentMessageID || rc.chatID != chatID || rc.sessionKey != target.SessionKey {
+		t.Fatalf("ReplyCtx = %#v, want parent replyContext for target", target.ReplyCtx)
+	}
+	if target.CleanupHandle == nil {
+		t.Fatal("CleanupHandle = nil, want seed cleanup handle")
+	}
+	if err := p.DeletePreviewMessage(context.Background(), target.CleanupHandle); err != nil {
+		t.Fatalf("DeletePreviewMessage(seed) error = %v", err)
+	}
+	if !sawSeedDelete {
+		t.Fatal("seed delete API was not called")
 	}
 }
 
