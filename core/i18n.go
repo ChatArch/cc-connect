@@ -518,6 +518,19 @@ const (
 	MsgPsSendFailed        MsgKey = "ps_send_failed"
 	MsgPsEmpty             MsgKey = "ps_empty"
 	MsgPsNoSession         MsgKey = "ps_no_session"
+	MsgSteerSent           MsgKey = "steer_sent"
+	MsgSteerSendFailed     MsgKey = "steer_send_failed"
+	MsgSteerEmpty          MsgKey = "steer_empty"
+	MsgInterruptUsage      MsgKey = "interrupt_usage"
+	MsgInterruptNoSession  MsgKey = "interrupt_no_session"
+	MsgQueueUsage          MsgKey = "queue_usage"
+	MsgQueueStatus         MsgKey = "queue_status"
+	MsgQueueMode           MsgKey = "queue_mode"
+	MsgQueueModeSet        MsgKey = "queue_mode_set"
+	MsgQueueInvalidMode    MsgKey = "queue_invalid_mode"
+	MsgQueueDepth          MsgKey = "queue_depth"
+	MsgQueueDepthSet       MsgKey = "queue_depth_set"
+	MsgQueueInvalidDepth   MsgKey = "queue_invalid_depth"
 	MsgThreadUsage         MsgKey = "thread_usage"
 	MsgThreadNotSupported  MsgKey = "thread_not_supported"
 	MsgThreadCreateFailed  MsgKey = "thread_create_failed"
@@ -588,7 +601,11 @@ const (
 	MsgBuiltinCmdDir       MsgKey = "dir"
 	MsgBuiltinCmdDiff      MsgKey = "diff"
 	MsgBuiltinCmdPs        MsgKey = "ps"
+	MsgBuiltinCmdSteer     MsgKey = "steer"
+	MsgBuiltinCmdInterrupt MsgKey = "interrupt"
+	MsgBuiltinCmdQueue     MsgKey = "queue"
 	MsgBuiltinCmdThread    MsgKey = "thread"
+	MsgBuiltinCmdT         MsgKey = "t"
 
 	MsgDiffEmpty       MsgKey = "diff_empty"
 	MsgDiffNoDiff2HTML MsgKey = "diff_no_diff2html"
@@ -1011,6 +1028,12 @@ var messages = map[MsgKey]map[Language]string{
 			"/show <ref>\n  View a file, directory, or code snippet by reference\n\n" +
 			"/dir [path|reset]\n  Show, switch, or reset agent working directory\n\n" +
 			"/stop\n  Stop current execution\n\n" +
+			"/interrupt <message>\n  Interrupt the running task and process a replacement message\n\n" +
+			"/queue [status|mode|depth]\n  Show or update busy-input queue behavior\n\n" +
+			"/ps <message>\n  Send a P.S. to the running task\n\n" +
+			"/steer <message>\n  Steer the running task (alias-compatible with /ps behavior)\n\n" +
+			"/thread <message>\n  Create an isolated platform thread\n\n" +
+			"/t <message>\n  Alias for /thread\n\n" +
 			"/cron [add|list|exec|del|enable|disable]\n  Manage scheduled tasks\n\n" +
 			"/timer [add|list|del|mute|unmute]\n  Manage one-shot timers\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  Manage heartbeat\n\n" +
@@ -1055,6 +1078,12 @@ var messages = map[MsgKey]map[Language]string{
 			"/show <引用>\n  按引用查看文件、目录或代码片段\n\n" +
 			"/dir [路径|reset]\n  查看、切换或重置 Agent 工作目录\n\n" +
 			"/stop\n  停止当前执行\n\n" +
+			"/interrupt <消息>\n  中断正在执行的任务并处理替换消息\n\n" +
+			"/queue [status|mode|depth]\n  查看或更新忙时输入队列行为\n\n" +
+			"/ps <消息>\n  向正在执行的任务追加补充信息\n\n" +
+			"/steer <消息>\n  引导正在执行的任务（兼容 /ps 行为）\n\n" +
+			"/thread <消息>\n  创建独立的话题会话\n\n" +
+			"/t <消息>\n  /thread 的别名\n\n" +
 			"/cron [add|list|exec|del|enable|disable]\n  管理定时任务\n\n" +
 			"/timer [add|list|del|mute|unmute]\n  管理一次性定时器\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  管理心跳\n\n" +
@@ -1098,6 +1127,12 @@ var messages = map[MsgKey]map[Language]string{
 			"/shell [--timeout <秒>] <命令>\n  執行 Shell 命令並返回結果（快捷方式：!命令）\n\n" +
 			"/dir [路徑|reset]\n  查看、切換或重置 Agent 工作目錄\n\n" +
 			"/stop\n  停止當前執行\n\n" +
+			"/interrupt <訊息>\n  中斷正在執行的任務並處理替換訊息\n\n" +
+			"/queue [status|mode|depth]\n  查看或更新忙時輸入佇列行為\n\n" +
+			"/ps <訊息>\n  向正在執行的任務追加補充資訊\n\n" +
+			"/steer <訊息>\n  引導正在執行的任務（相容 /ps 行為）\n\n" +
+			"/thread <訊息>\n  建立獨立的話題會話\n\n" +
+			"/t <訊息>\n  /thread 的別名\n\n" +
 			"/cron [add|list|exec|del|enable|disable]\n  管理定時任務\n\n" +
 			"/timer [add|list|del|mute|unmute]\n  管理一次性定時器\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  管理心跳\n\n" +
@@ -1140,6 +1175,12 @@ var messages = map[MsgKey]map[Language]string{
 			"/shell [--timeout <秒>] <コマンド>\n  シェルコマンドを実行して結果を返す（ショートカット：!コマンド）\n\n" +
 			"/dir [パス|reset]\n  エージェントの作業ディレクトリを表示/切り替え/リセット\n\n" +
 			"/stop\n  現在の実行を停止\n\n" +
+			"/interrupt <メッセージ>\n  実行中のタスクを中断して置き換えメッセージを処理\n\n" +
+			"/queue [status|mode|depth]\n  ビジー時入力キューの動作を表示/更新\n\n" +
+			"/ps <メッセージ>\n  実行中のタスクに補足情報を送信\n\n" +
+			"/steer <メッセージ>\n  実行中のタスクを誘導（/ps と互換動作）\n\n" +
+			"/thread <メッセージ>\n  分離されたプラットフォームスレッドを作成\n\n" +
+			"/t <メッセージ>\n  /thread のエイリアス\n\n" +
 			"/cron [add|list|exec|del|enable|disable]\n  スケジュールタスク管理\n\n" +
 			"/timer [add|list|del|mute|unmute]\n  ワンショットタイマー管理\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  ハートビート管理\n\n" +
@@ -1182,6 +1223,12 @@ var messages = map[MsgKey]map[Language]string{
 			"/shell [--timeout <seg>] <comando>\n  Ejecutar un comando shell y devolver la salida (atajo: !comando)\n\n" +
 			"/dir [ruta|reset]\n  Ver, cambiar o restablecer el directorio de trabajo del agente\n\n" +
 			"/stop\n  Detener ejecución actual\n\n" +
+			"/interrupt <mensaje>\n  Interrumpir la tarea en curso y procesar un reemplazo\n\n" +
+			"/queue [status|mode|depth]\n  Ver o actualizar la cola de entrada ocupada\n\n" +
+			"/ps <mensaje>\n  Enviar un P.S. a la tarea en curso\n\n" +
+			"/steer <mensaje>\n  Dirigir la tarea en curso (compatible con /ps)\n\n" +
+			"/thread <mensaje>\n  Crear un hilo aislado\n\n" +
+			"/t <mensaje>\n  Alias de /thread\n\n" +
 			"/cron [add|list|exec|del|enable|disable]\n  Gestionar tareas programadas\n\n" +
 			"/timer [add|list|del|mute|unmute]\n  Gestionar temporizadores de uso único\n\n" +
 			"/heartbeat [status|pause|resume|run|interval]\n  Gestionar heartbeat\n\n" +
@@ -1222,6 +1269,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [number] <text> — Name a session\n" +
 			"/current — Show active session\n" +
 			"/thread <message> — Create an isolated platform thread\n" +
+			"/t <message> — Alias for /thread\n" +
 			"/history [n] — Show last n messages",
 		LangChinese: "**会话管理**\n" +
 			"/new [名称] — 创建新会话\n" +
@@ -1232,6 +1280,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [序号] <名称> — 命名会话\n" +
 			"/current — 查看当前会话\n" +
 			"/thread <消息> — 创建独立的话题会话\n" +
+			"/t <消息> — /thread 的别名\n" +
 			"/history [n] — 查看最近 n 条消息",
 		LangTraditionalChinese: "**會話管理**\n" +
 			"/new [名稱] — 建立新會話\n" +
@@ -1242,6 +1291,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [序號] <名稱> — 命名會話\n" +
 			"/current — 查看當前會話\n" +
 			"/thread <訊息> — 建立獨立的話題會話\n" +
+			"/t <訊息> — /thread 的別名\n" +
 			"/history [n] — 查看最近 n 條訊息",
 		LangJapanese: "**セッション管理**\n" +
 			"/new [名前] — 新しいセッションを開始\n" +
@@ -1252,6 +1302,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [番号] <名前> — セッションに名前を付ける\n" +
 			"/current — 現在のセッションを表示\n" +
 			"/thread <メッセージ> — 分離されたプラットフォームスレッドを作成\n" +
+			"/t <メッセージ> — /thread のエイリアス\n" +
 			"/history [n] — 直近 n 件のメッセージを表示",
 		LangSpanish: "**Gestión de sesiones**\n" +
 			"/new [nombre] — Iniciar nueva sesión\n" +
@@ -1262,6 +1313,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [número] <texto> — Nombrar sesión\n" +
 			"/current — Mostrar sesión activa\n" +
 			"/thread <mensaje> — Crear un hilo aislado\n" +
+			"/t <mensaje> — Alias de /thread\n" +
 			"/history [n] — Mostrar últimos n mensajes",
 	},
 	MsgHelpAgentSection: {
@@ -1312,7 +1364,11 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — Command aliases\n" +
 			"/skills — List agent skills\n" +
 			"/compress — Compress context\n" +
-			"/stop — Stop current execution",
+			"/stop — Stop current execution\n" +
+			"/interrupt <message> — Interrupt and replace the running task\n" +
+			"/queue [status|mode|depth] — Show or update busy-input queue behavior\n" +
+			"/ps <message> — Send a P.S. to the running task\n" +
+			"/steer <message> — Steer the running task",
 		LangChinese: "**工具与自动化**\n" +
 			"/shell <命令> — 执行 Shell 命令（!快捷方式）\n" +
 			"/show <引用> — 按引用查看文件、目录或代码片段\n" +
@@ -1323,7 +1379,11 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — 命令别名\n" +
 			"/skills — 列出 Agent Skills\n" +
 			"/compress — 压缩上下文\n" +
-			"/stop — 停止当前执行",
+			"/stop — 停止当前执行\n" +
+			"/interrupt <消息> — 中断并替换正在执行的任务\n" +
+			"/queue [status|mode|depth] — 查看或更新忙时输入队列行为\n" +
+			"/ps <消息> — 向正在执行的任务追加补充信息\n" +
+			"/steer <消息> — 引导正在执行的任务",
 		LangTraditionalChinese: "**工具與自動化**\n" +
 			"/shell <命令> — 執行 Shell 命令（!快捷方式）\n" +
 			"/show <引用> — 按引用查看檔案、目錄或程式碼片段\n" +
@@ -1334,7 +1394,11 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — 命令別名\n" +
 			"/skills — 列出 Agent Skills\n" +
 			"/compress — 壓縮上下文\n" +
-			"/stop — 停止當前執行",
+			"/stop — 停止當前執行\n" +
+			"/interrupt <訊息> — 中斷並替換正在執行的任務\n" +
+			"/queue [status|mode|depth] — 查看或更新忙時輸入佇列行為\n" +
+			"/ps <訊息> — 向正在執行的任務追加補充資訊\n" +
+			"/steer <訊息> — 引導正在執行的任務",
 		LangJapanese: "**ツール・自動化**\n" +
 			"/shell <コマンド> — シェルコマンド実行（!ショートカット）\n" +
 			"/show <参照> — ファイル/ディレクトリ/スニペットを参照で表示\n" +
@@ -1345,7 +1409,11 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — コマンドエイリアス\n" +
 			"/skills — エージェントスキル一覧\n" +
 			"/compress — コンテキスト圧縮\n" +
-			"/stop — 現在の実行を停止",
+			"/stop — 現在の実行を停止\n" +
+			"/interrupt <メッセージ> — 実行中タスクを中断して置き換え\n" +
+			"/queue [status|mode|depth] — ビジー時入力キュー動作を表示/更新\n" +
+			"/ps <メッセージ> — 実行中タスクに補足情報を送信\n" +
+			"/steer <メッセージ> — 実行中タスクを誘導",
 		LangSpanish: "**Herramientas y automatización**\n" +
 			"/shell <comando> — Ejecutar comando shell (! atajo)\n" +
 			"/show <ref> — Ver archivo/directorio/fragmento por referencia\n" +
@@ -1356,7 +1424,11 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del] — Alias de comandos\n" +
 			"/skills — Listar skills del agente\n" +
 			"/compress — Comprimir contexto\n" +
-			"/stop — Detener ejecución actual",
+			"/stop — Detener ejecución actual\n" +
+			"/interrupt <mensaje> — Interrumpir y reemplazar la tarea en curso\n" +
+			"/queue [status|mode|depth] — Ver o actualizar cola ocupada\n" +
+			"/ps <mensaje> — Enviar un P.S. a la tarea en curso\n" +
+			"/steer <mensaje> — Dirigir la tarea en curso",
 	},
 	MsgHelpSystemSection: {
 		LangEnglish: "**System**\n" +
@@ -3391,6 +3463,97 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "現在実行中のタスクはありません。",
 		LangSpanish:            "No hay ninguna tarea en ejecución.",
 	},
+	MsgSteerSent: {
+		LangEnglish:            "✅ Steer delivered.",
+		LangChinese:            "✅ steer 已送达。",
+		LangTraditionalChinese: "✅ steer 已送達。",
+		LangJapanese:           "✅ steer を送信しました。",
+		LangSpanish:            "✅ Steer entregado.",
+	},
+	MsgSteerSendFailed: {
+		LangEnglish:            "❌ Failed to deliver steer message.",
+		LangChinese:            "❌ steer 消息发送失败。",
+		LangTraditionalChinese: "❌ steer 訊息傳送失敗。",
+		LangJapanese:           "❌ steer メッセージの送信に失敗しました。",
+		LangSpanish:            "❌ Error al entregar el mensaje steer.",
+	},
+	MsgSteerEmpty: {
+		LangEnglish:            "Usage: `/steer <message>`",
+		LangChinese:            "用法：`/steer <消息>`",
+		LangTraditionalChinese: "用法：`/steer <訊息>`",
+		LangJapanese:           "使い方：`/steer <メッセージ>`",
+		LangSpanish:            "Uso: `/steer <mensaje>`",
+	},
+	MsgInterruptUsage: {
+		LangEnglish:            "Usage: `/interrupt <replacement message>`",
+		LangChinese:            "用法：`/interrupt <替换消息>`",
+		LangTraditionalChinese: "用法：`/interrupt <替換訊息>`",
+		LangJapanese:           "使い方：`/interrupt <置き換えメッセージ>`",
+		LangSpanish:            "Uso: `/interrupt <mensaje de reemplazo>`",
+	},
+	MsgInterruptNoSession: {
+		LangEnglish:            "No running task to interrupt.",
+		LangChinese:            "当前没有可中断的任务。",
+		LangTraditionalChinese: "目前沒有可中斷的任務。",
+		LangJapanese:           "中断できる実行中タスクはありません。",
+		LangSpanish:            "No hay ninguna tarea en ejecución para interrumpir.",
+	},
+	MsgQueueUsage: {
+		LangEnglish:            "Usage: `/queue status`, `/queue mode <queue|interrupt>`, or `/queue depth <n>`",
+		LangChinese:            "用法：`/queue status`、`/queue mode <queue|interrupt>` 或 `/queue depth <n>`",
+		LangTraditionalChinese: "用法：`/queue status`、`/queue mode <queue|interrupt>` 或 `/queue depth <n>`",
+		LangJapanese:           "使い方：`/queue status`、`/queue mode <queue|interrupt>`、または `/queue depth <n>`",
+		LangSpanish:            "Uso: `/queue status`, `/queue mode <queue|interrupt>` o `/queue depth <n>`",
+	},
+	MsgQueueStatus: {
+		LangEnglish:            "📬 Queue status\nMode: %s\nPending: %d\nMax depth: %d",
+		LangChinese:            "📬 队列状态\n模式: %s\n待处理: %d\n最大深度: %d",
+		LangTraditionalChinese: "📬 佇列狀態\n模式: %s\n待處理: %d\n最大深度: %d",
+		LangJapanese:           "📬 キュー状態\nモード: %s\n保留中: %d\n最大深度: %d",
+		LangSpanish:            "📬 Estado de cola\nModo: %s\nPendientes: %d\nProfundidad máx.: %d",
+	},
+	MsgQueueMode: {
+		LangEnglish:            "Queue mode: %s",
+		LangChinese:            "队列模式: %s",
+		LangTraditionalChinese: "佇列模式: %s",
+		LangJapanese:           "キューモード: %s",
+		LangSpanish:            "Modo de cola: %s",
+	},
+	MsgQueueModeSet: {
+		LangEnglish:            "✅ Queue mode set to `%s`.",
+		LangChinese:            "✅ 队列模式已设为 `%s`。",
+		LangTraditionalChinese: "✅ 佇列模式已設為 `%s`。",
+		LangJapanese:           "✅ キューモードを `%s` に設定しました。",
+		LangSpanish:            "✅ Modo de cola establecido en `%s`.",
+	},
+	MsgQueueInvalidMode: {
+		LangEnglish:            "Invalid queue mode. Use `queue` or `interrupt`.",
+		LangChinese:            "无效队列模式。请使用 `queue` 或 `interrupt`。",
+		LangTraditionalChinese: "無效佇列模式。請使用 `queue` 或 `interrupt`。",
+		LangJapanese:           "無効なキューモードです。`queue` または `interrupt` を使用してください。",
+		LangSpanish:            "Modo de cola inválido. Use `queue` o `interrupt`.",
+	},
+	MsgQueueDepth: {
+		LangEnglish:            "Queue max depth: %d",
+		LangChinese:            "队列最大深度: %d",
+		LangTraditionalChinese: "佇列最大深度: %d",
+		LangJapanese:           "キュー最大深度: %d",
+		LangSpanish:            "Profundidad máxima de cola: %d",
+	},
+	MsgQueueDepthSet: {
+		LangEnglish:            "✅ Queue max depth set to %d.",
+		LangChinese:            "✅ 队列最大深度已设为 %d。",
+		LangTraditionalChinese: "✅ 佇列最大深度已設為 %d。",
+		LangJapanese:           "✅ キュー最大深度を %d に設定しました。",
+		LangSpanish:            "✅ Profundidad máxima de cola establecida en %d.",
+	},
+	MsgQueueInvalidDepth: {
+		LangEnglish:            "Invalid queue depth. Use a positive integer.",
+		LangChinese:            "无效队列深度。请使用正整数。",
+		LangTraditionalChinese: "無效佇列深度。請使用正整數。",
+		LangJapanese:           "無効なキュー深度です。正の整数を使用してください。",
+		LangSpanish:            "Profundidad de cola inválida. Use un entero positivo.",
+	},
 	MsgThreadUsage: {
 		LangEnglish:            "Usage: `/thread <message>`",
 		LangChinese:            "用法：`/thread <消息>`",
@@ -3830,12 +3993,40 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "実行中のタスクに補足情報を送信",
 		LangSpanish:            "Enviar un P.S. a la tarea en curso",
 	},
+	MsgBuiltinCmdSteer: {
+		LangEnglish:            "Steer the running task, arg: <message>",
+		LangChinese:            "引导正在执行的任务，参数: <消息>",
+		LangTraditionalChinese: "引導正在執行的任務，參數: <訊息>",
+		LangJapanese:           "実行中のタスクを誘導、引数: <メッセージ>",
+		LangSpanish:            "Dirigir la tarea en curso, arg: <mensaje>",
+	},
+	MsgBuiltinCmdInterrupt: {
+		LangEnglish:            "Interrupt the running task and replace it, arg: <message>",
+		LangChinese:            "中断正在执行的任务并替换为新消息，参数: <消息>",
+		LangTraditionalChinese: "中斷正在執行的任務並替換為新訊息，參數: <訊息>",
+		LangJapanese:           "実行中タスクを中断して置き換え、引数: <メッセージ>",
+		LangSpanish:            "Interrumpir y reemplazar la tarea en curso, arg: <mensaje>",
+	},
+	MsgBuiltinCmdQueue: {
+		LangEnglish:            "Show or update busy-input queue mode/depth",
+		LangChinese:            "查看或更新忙时输入队列模式/深度",
+		LangTraditionalChinese: "查看或更新忙時輸入佇列模式/深度",
+		LangJapanese:           "ビジー時入力キューのモード/深度を表示または更新",
+		LangSpanish:            "Ver o actualizar modo/profundidad de cola",
+	},
 	MsgBuiltinCmdThread: {
 		LangEnglish:            "Create an isolated platform thread, arg: <message>",
 		LangChinese:            "创建独立的话题会话，参数: <消息>",
 		LangTraditionalChinese: "建立獨立的話題會話，參數: <訊息>",
 		LangJapanese:           "分離されたプラットフォームスレッドを作成、引数: <メッセージ>",
 		LangSpanish:            "Crear un hilo aislado, arg: <mensaje>",
+	},
+	MsgBuiltinCmdT: {
+		LangEnglish:            "Alias for /thread",
+		LangChinese:            "/thread 的别名",
+		LangTraditionalChinese: "/thread 的別名",
+		LangJapanese:           "/thread のエイリアス",
+		LangSpanish:            "Alias de /thread",
 	},
 	MsgDiffEmpty: {
 		LangEnglish:            "No diff — clean working tree (or no changes vs `%s`).",
