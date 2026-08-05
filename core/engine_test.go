@@ -74,10 +74,10 @@ func (p *stubPlatformEngine) Stop() error { return nil }
 
 type threadCreatingPlatform struct {
 	stubPlatformEngine
-	createCalls   int
-	lastReplyCtx  any
-	result        ThreadTarget
-	err           error
+	createCalls  int
+	lastReplyCtx any
+	result       ThreadTarget
+	err          error
 	cleanupCalls []any
 }
 
@@ -6982,6 +6982,8 @@ type controllableAgentSession struct {
 	alive           atomic.Bool
 	events          chan Event
 	closed          chan struct{} // closed when Close() is called
+	mu              sync.Mutex
+	sentPrompts     []string
 	model           string
 	reasoningEffort string
 	workDir         string
@@ -7000,8 +7002,19 @@ func newControllableSession(id string) *controllableAgentSession {
 	return s
 }
 
-func (s *controllableAgentSession) Send(_ string, _ []ImageAttachment, _ []FileAttachment) error {
+func (s *controllableAgentSession) Send(prompt string, _ []ImageAttachment, _ []FileAttachment) error {
+	s.mu.Lock()
+	s.sentPrompts = append(s.sentPrompts, prompt)
+	s.mu.Unlock()
 	return nil
+}
+
+func (s *controllableAgentSession) sentPromptSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.sentPrompts))
+	copy(out, s.sentPrompts)
+	return out
 }
 func (s *controllableAgentSession) RespondPermission(_ string, _ PermissionResult) error { return nil }
 func (s *controllableAgentSession) Events() <-chan Event                                 { return s.events }
@@ -9526,6 +9539,67 @@ func TestBusyInputModeInterruptSwitchesProcessingIndicatorToNewMessage(t *testin
 	}, "interrupt did not move processing indicator from old message to new message")
 }
 
+func TestBusyInputModeSteerSendsPlainTextToRunningSessionWithoutQueueing(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	running := newControllableSession("running")
+	agent := &controllableAgent{nextSession: running}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetBusyInputMode(BusyInputModeSteer)
+
+	key := "test:steer-user"
+	session := e.sessions.GetOrCreateActive(key)
+	if !session.TryLock() {
+		t.Fatal("expected to lock active session")
+	}
+	defer session.UnlockWithoutUpdate()
+
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{
+		agentSession: running,
+		platform:     p,
+		replyCtx:     "ctx-running",
+	}
+	e.interactiveMu.Unlock()
+
+	e.handleMessage(p, &Message{
+		SessionKey: key,
+		MessageID:  "m2",
+		UserID:     "u1",
+		UserName:   "User",
+		Platform:   "test",
+		Content:    "please steer the current task",
+		ReplyCtx:   "ctx-2",
+	})
+
+	if got := running.sentPromptSnapshot(); len(got) != 1 || got[0] != "please steer the current task" {
+		t.Fatalf("running session prompts = %#v, want one steer prompt", got)
+	}
+
+	e.interactiveMu.Lock()
+	state := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+	state.mu.Lock()
+	queued := len(state.pendingMessages)
+	state.mu.Unlock()
+	if queued != 0 {
+		t.Fatalf("steer mode queued %d messages, want 0", queued)
+	}
+
+	sent := p.getSent()
+	gotSteerAck := false
+	for _, line := range sent {
+		if line == e.i18n.T(MsgSteerSent) {
+			gotSteerAck = true
+		}
+		if strings.Contains(line, e.i18n.T(MsgMessageQueued)) {
+			t.Fatalf("steer mode should not send queued reply, got %v", sent)
+		}
+	}
+	if !gotSteerAck {
+		t.Fatalf("steer mode should send steer ack %q, got %v", e.i18n.T(MsgSteerSent), sent)
+	}
+}
+
 // TestProcessInteractiveMessageWith_NilAgentSession_NoPanic is a regression
 // test for issue #1181. When a long-running agent turn is force-killed
 // (e.g. by max_turn_time_mins) the cleanup path may leave an interactive
@@ -10007,6 +10081,227 @@ func TestCmdPs_BusySession_InjectsToAgent(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected MsgPsSent reply, got %v", sent)
+	}
+}
+
+func TestHandleCommandSteer_BusySessionInjectsToAgent(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newQueuingSession("steer-busy")
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{agentSession: sess, platform: p}
+	e.interactiveMu.Unlock()
+
+	session := e.sessions.GetOrCreateActive(key)
+	if !session.TryLock() {
+		t.Fatal("expected busy session lock")
+	}
+	defer session.Unlock()
+
+	msg := &Message{SessionKey: key, Content: "/steer add regression tests", ReplyCtx: "ctx"}
+	if !e.handleCommand(p, msg, "/steer add regression tests") {
+		t.Fatal("/steer should be handled as a built-in command")
+	}
+
+	sess.sendMu.Lock()
+	calls := append([]string(nil), sess.sendCalls...)
+	sess.sendMu.Unlock()
+	if len(calls) != 1 || calls[0] != "add regression tests" {
+		t.Fatalf("expected /steer to inject text into running task, got calls %v", calls)
+	}
+}
+
+func TestHandleCommandInterrupt_StopsBusyTurnAndRunsReplacement(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	oldSession := newControllableSession("old-agent-session")
+	replacementSession := newPromptRecordingAgentSession("replacement-agent-session")
+	agent := &controllableAgent{
+		startSessionFn: func(_ context.Context, sessionID string) (AgentSession, error) {
+			if sessionID != "old-agent-session" {
+				t.Fatalf("replacement should resume the interrupted conversation, got session id %q", sessionID)
+			}
+			return replacementSession, nil
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	session := e.sessions.GetOrCreateActive(key)
+	session.SetAgentSessionID("old-agent-session", agent.Name())
+	if !session.TryLock() {
+		t.Fatal("expected to lock session to simulate busy turn")
+	}
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{agentSession: oldSession, platform: p, replyCtx: "ctx-old"}
+	e.interactiveMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		msg := &Message{SessionKey: key, Content: "/interrupt run the replacement", ReplyCtx: "ctx-new", UserID: "user1", UserName: "User"}
+		e.handleCommand(p, msg, "/interrupt run the replacement")
+		close(done)
+	}()
+
+	waitForCondition(t, 2*time.Second, func() bool {
+		for _, line := range p.getSent() {
+			if strings.Contains(line, e.i18n.T(MsgBusyInterrupted)) {
+				return true
+			}
+		}
+		return false
+	}, "interrupt acknowledgement was not sent")
+
+	// The interrupted foreground goroutine owns this lock in production; release
+	// it here so /interrupt can take over and start the replacement prompt.
+	session.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("/interrupt command did not return")
+	}
+
+	select {
+	case prompt := <-replacementSession.prompts:
+		if prompt != "run the replacement" {
+			t.Fatalf("replacement prompt = %q, want run the replacement", prompt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement prompt was not sent after /interrupt")
+	}
+
+	select {
+	case <-oldSession.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old agent session was not closed by /interrupt")
+	}
+}
+
+func TestHandleCommandQueue_StatusModeAndDepth(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetBusyInputMode(BusyInputModeInterrupt)
+	e.SetMaxQueuedMessages(7)
+
+	key := "test:user1"
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{
+		platform: p,
+		pendingMessages: []queuedMessage{
+			{content: "queued one"},
+			{content: "queued two"},
+		},
+	}
+	e.interactiveMu.Unlock()
+
+	msg := &Message{SessionKey: key, Content: "/queue status", ReplyCtx: "ctx"}
+	if !e.handleCommand(p, msg, "/queue status") {
+		t.Fatal("/queue status should be handled as a built-in command")
+	}
+
+	sent := strings.Join(p.getSent(), "\n")
+	for _, want := range []string{"Mode: interrupt", "Pending: 2", "Max depth: 7"} {
+		if !strings.Contains(sent, want) {
+			t.Fatalf("/queue status missing %q in %q", want, sent)
+		}
+	}
+}
+
+func TestHandleCommandQueue_ModeAndDepthUpdateRuntimeSettings(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetAdminFrom("user1")
+	msg := &Message{SessionKey: "test:user1", UserID: "user1", Content: "/queue mode interrupt", ReplyCtx: "ctx"}
+
+	if !e.handleCommand(p, msg, "/queue mode interrupt") {
+		t.Fatal("/queue mode should be handled")
+	}
+	busyInputMode, _ := e.queueConfigSnapshot()
+	if busyInputMode != BusyInputModeInterrupt {
+		t.Fatalf("busyInputMode = %q, want interrupt", busyInputMode)
+	}
+	if !e.handleCommand(p, msg, "/queue depth 9") {
+		t.Fatal("/queue depth should be handled")
+	}
+	_, maxQueuedMessages := e.queueConfigSnapshot()
+	if maxQueuedMessages != 9 {
+		t.Fatalf("maxQueuedMessages = %d, want 9", maxQueuedMessages)
+	}
+}
+
+func TestHandleCommandQueue_ModeAndDepthRequireAdmin(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetAdminFrom("admin")
+	msg := &Message{SessionKey: "test:user1", UserID: "user1", Content: "/queue mode interrupt", ReplyCtx: "ctx"}
+
+	if !e.handleCommand(p, msg, "/queue mode interrupt") {
+		t.Fatal("/queue mode should be handled")
+	}
+	busyInputMode, _ := e.queueConfigSnapshot()
+	if busyInputMode != BusyInputModeQueue {
+		t.Fatalf("busyInputMode = %q, want unchanged queue", busyInputMode)
+	}
+	if !strings.Contains(strings.Join(p.getSent(), "\n"), "requires admin") {
+		t.Fatalf("expected admin-required reply, got %v", p.getSent())
+	}
+}
+
+func TestQueueRuntimeSettingsAreRaceSafe(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	msg := &Message{SessionKey: "test:user1", UserID: "user1", Content: "/queue status", ReplyCtx: "ctx"}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			modes := []BusyInputMode{BusyInputModeQueue, BusyInputModeInterrupt, BusyInputModeSteer}
+			for j := 0; j < 200; j++ {
+				e.SetBusyInputMode(modes[(i+j)%len(modes)])
+				e.SetMaxQueuedMessages((i+j)%10 + 1)
+			}
+		}(i)
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 200; j++ {
+				e.replyQueueStatus(p, msg)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
+func TestHelpSurfacesExposeChatArchTurnControlCommands(t *testing.T) {
+	groups := helpCardGroups()
+	commands := map[string]bool{}
+	for _, group := range groups {
+		for _, item := range group.items {
+			commands[item.command] = true
+		}
+	}
+	for _, want := range []string{"/thread", "/t", "/ps", "/steer", "/interrupt", "/queue"} {
+		if !commands[want] {
+			t.Fatalf("help card is missing %s; commands = %v", want, commands)
+		}
+	}
+
+	e := NewEngine("test", &stubAgent{}, []Platform{&stubPlatformEngine{n: "test"}}, "", LangEnglish)
+	textHelp := e.i18n.T(MsgHelp)
+	for _, want := range []string{"/thread", "/t", "/ps", "/steer", "/interrupt", "/queue"} {
+		if !strings.Contains(textHelp, want) {
+			t.Fatalf("text help is missing %s", want)
+		}
 	}
 }
 

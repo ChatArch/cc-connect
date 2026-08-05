@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- **ChatArch IM turn controls**: add `/steer` as a running-task steering command, `/interrupt <message>` to stop a busy turn and process replacement text, and `/queue status|mode|depth` for busy-input queue visibility and runtime control. `/queue mode steer` now makes ordinary text sent during a busy turn behave like `/steer <message>` instead of entering the FIFO queue. `/help` now surfaces `/thread`, `/t`, `/ps`, `/steer`, `/interrupt`, and `/queue`.
+
 ## v1.0.3 (2026-06-28)
 
 ### Fixed

@@ -35,12 +35,15 @@ type BusyInputMode string
 const (
 	BusyInputModeQueue     BusyInputMode = "queue"
 	BusyInputModeInterrupt BusyInputMode = "interrupt"
+	BusyInputModeSteer     BusyInputMode = "steer"
 )
 
 func normalizeBusyInputMode(mode BusyInputMode) BusyInputMode {
 	switch BusyInputMode(strings.ToLower(strings.TrimSpace(string(mode)))) {
 	case BusyInputModeInterrupt:
 		return BusyInputModeInterrupt
+	case BusyInputModeSteer:
+		return BusyInputModeSteer
 	default:
 		return BusyInputModeQueue
 	}
@@ -260,6 +263,7 @@ type Engine struct {
 	relayManager      *RelayManager
 	eventIdleTimeout  time.Duration
 	maxTurnTime       time.Duration // absolute wall-clock cap per turn (0 = disabled)
+	queueConfigMu     sync.RWMutex
 	maxQueuedMessages int
 	busyInputMode     BusyInputMode
 	dirHistory        *DirHistory
@@ -1136,6 +1140,8 @@ func (e *Engine) SetEventIdleTimeout(d time.Duration) {
 // Values <= 0 are ignored.
 func (e *Engine) SetMaxQueuedMessages(n int) {
 	if n > 0 {
+		e.queueConfigMu.Lock()
+		defer e.queueConfigMu.Unlock()
 		e.maxQueuedMessages = n
 	}
 }
@@ -1143,7 +1149,25 @@ func (e *Engine) SetMaxQueuedMessages(n int) {
 // SetBusyInputMode controls how ordinary messages are handled while a turn is busy.
 // The default is queue, preserving existing behavior.
 func (e *Engine) SetBusyInputMode(mode BusyInputMode) {
+	e.queueConfigMu.Lock()
+	defer e.queueConfigMu.Unlock()
 	e.busyInputMode = normalizeBusyInputMode(mode)
+}
+
+func (e *Engine) queueConfigSnapshot() (BusyInputMode, int) {
+	e.queueConfigMu.RLock()
+	defer e.queueConfigMu.RUnlock()
+	return e.busyInputMode, e.maxQueuedMessages
+}
+
+func (e *Engine) busyInputModeSnapshot() BusyInputMode {
+	mode, _ := e.queueConfigSnapshot()
+	return mode
+}
+
+func (e *Engine) maxQueuedMessagesSnapshot() int {
+	_, maxDepth := e.queueConfigSnapshot()
+	return maxDepth
 }
 
 func (e *Engine) SetRelayManager(rm *RelayManager) {
@@ -2763,7 +2787,8 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPreviousProcessing))
 			return
 		}
-		if e.busyInputMode == BusyInputModeInterrupt {
+		busyInputMode := e.busyInputModeSnapshot()
+		if busyInputMode == BusyInputModeInterrupt {
 			if e.interruptBusySession(interactiveKey, session) {
 				e.reply(p, msg.ReplyCtx, e.i18n.T(MsgBusyInterrupted))
 				if e.waitForSessionLock(session, recalledStopLockWait) {
@@ -2773,6 +2798,10 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 					"session", msg.SessionKey, "interactive_key", interactiveKey)
 				return
 			}
+		}
+		if busyInputMode == BusyInputModeSteer && strings.TrimSpace(msg.Content) != "" && len(msg.Images) == 0 && len(msg.Files) == 0 {
+			e.sendRunningTaskSupplement(p, msg, []string{msg.Content}, MsgSteerEmpty, MsgSteerSent, MsgSteerSendFailed)
+			return
 		}
 		// Session is busy — try to queue the message for the running turn
 		// so the agent processes it immediately after the current turn ends.
@@ -2908,7 +2937,8 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		e.logStaleUserMessageDropped("reject_before_queue", msg, interactiveKey, snap)
 		return true
 	}
-	if len(state.pendingMessages) >= e.maxQueuedMessages {
+	maxQueuedMessages := e.maxQueuedMessagesSnapshot()
+	if len(state.pendingMessages) >= maxQueuedMessages {
 		depth := len(state.pendingMessages)
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgQueueFull), depth))
 		return true // handled: queue-full reply sent
@@ -5829,7 +5859,9 @@ var builtinCommands = []struct {
 	{[]string{"heartbeat", "hb"}, "heartbeat"},
 	{[]string{"compress", "compact"}, "compress"},
 	{[]string{"stop"}, "stop"},
+	{[]string{"interrupt"}, "interrupt"},
 	{[]string{"cancel"}, "cancel"},
+	{[]string{"queue"}, "queue"},
 	{[]string{"help"}, "help"},
 	{[]string{"version"}, "version"},
 	{[]string{"commands", "command", "cmd"}, "commands"},
@@ -5851,13 +5883,14 @@ var builtinCommands = []struct {
 	{[]string{"web"}, "web"},
 	{[]string{"diff"}, "diff"},
 	{[]string{"ps", "btw"}, "ps"},
+	{[]string{"steer"}, "steer"},
 	{[]string{"thread", "t"}, "thread"},
 }
 
-func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
+func (e *Engine) sendRunningTaskSupplement(p Platform, msg *Message, args []string, emptyKey, sentKey, failedKey MsgKey) {
 	text := strings.TrimSpace(strings.Join(args, " "))
 	if text == "" {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsEmpty))
+		e.reply(p, msg.ReplyCtx, e.i18n.T(emptyKey))
 		return
 	}
 	iKey := e.interactiveKeyForSessionKey(msg.SessionKey)
@@ -5868,21 +5901,137 @@ func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsNoSession))
 		return
 	}
-	// /ps is only meaningful as a supplement to a turn already in flight.
+	// P.S./steer are only meaningful as supplements to a turn already in flight.
 	// When the session is idle, injecting via agentSession.Send bypasses the
-	// session lock and races with concurrent normal messages on the CLI's
-	// stdin, so reject instead.
+	// session lock and races with concurrent normal messages on the CLI's stdin,
+	// so reject instead.
 	_, sessions := e.sessionContextForKey(msg.SessionKey)
 	if session := sessions.GetOrCreateActive(msg.SessionKey); !session.Busy() {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsNoSession))
 		return
 	}
 	if err := state.agentSession.Send(text, nil, nil); err != nil {
-		slog.Error("ps: send failed", "error", err)
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSendFailed))
+		slog.Error("supplement: send failed", "error", err)
+		e.reply(p, msg.ReplyCtx, e.i18n.T(failedKey))
 		return
 	}
-	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSent))
+	e.reply(p, msg.ReplyCtx, e.i18n.T(sentKey))
+}
+
+func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
+	e.sendRunningTaskSupplement(p, msg, args, MsgPsEmpty, MsgPsSent, MsgPsSendFailed)
+}
+
+func (e *Engine) cmdSteer(p Platform, msg *Message, args []string) {
+	e.sendRunningTaskSupplement(p, msg, args, MsgSteerEmpty, MsgSteerSent, MsgSteerSendFailed)
+}
+
+func (e *Engine) cmdInterrupt(p Platform, msg *Message, args []string) {
+	text := strings.TrimSpace(strings.Join(args, " "))
+	if text == "" {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgInterruptUsage))
+		return
+	}
+	agent, sessions, interactiveKey, workspaceDir, err := e.commandContextWithWorkspace(p, msg)
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
+		return
+	}
+	session := sessions.GetOrCreateActive(msg.SessionKey)
+	if !session.Busy() {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgInterruptNoSession))
+		return
+	}
+	if !e.interruptBusySession(interactiveKey, session) {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgInterruptNoSession))
+		return
+	}
+	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgBusyInterrupted))
+	if !e.waitForSessionLock(session, recalledStopLockWait) {
+		slog.Warn("explicit interrupt requested but session lock did not release before timeout",
+			"session", msg.SessionKey, "interactive_key", interactiveKey)
+		return
+	}
+
+	replacement := *msg
+	replacement.Content = text
+	replacement.ExtraContent = ""
+	replacement.Images = nil
+	replacement.Files = nil
+	replacement.Audio = nil
+	replacement.Recalled = false
+	replacement.CleanupHandle = nil
+
+	session.TouchUserActivity()
+	e.noteUserMessageAccepted(interactiveKey, msg.UserMessageTimeMs)
+	go e.processInteractiveMessageWith(p, &replacement, session, agent, sessions, interactiveKey, workspaceDir, msg.SessionKey)
+}
+
+func (e *Engine) pendingQueueDepth(interactiveKey string) int {
+	e.interactiveMu.Lock()
+	state := e.interactiveStates[interactiveKey]
+	e.interactiveMu.Unlock()
+	if state == nil {
+		return 0
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return len(state.pendingMessages)
+}
+
+func (e *Engine) replyQueueStatus(p Platform, msg *Message) {
+	interactiveKey := e.interactiveKeyForSessionKey(msg.SessionKey)
+	pending := e.pendingQueueDepth(interactiveKey)
+	busyInputMode, maxQueuedMessages := e.queueConfigSnapshot()
+	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueStatus, busyInputMode, pending, maxQueuedMessages))
+}
+
+func (e *Engine) cmdQueue(p Platform, msg *Message, args []string) {
+	if len(args) == 0 {
+		e.replyQueueStatus(p, msg)
+		return
+	}
+	sub := matchSubCommand(strings.ToLower(args[0]), []string{"status", "mode", "depth"})
+	switch sub {
+	case "status":
+		e.replyQueueStatus(p, msg)
+	case "mode":
+		if len(args) == 1 {
+			busyInputMode := e.busyInputModeSnapshot()
+			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueMode, busyInputMode))
+			return
+		}
+		if !e.isAdmin(msg.UserID) {
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgAdminRequired), "/queue"))
+			return
+		}
+		mode := BusyInputMode(strings.ToLower(strings.TrimSpace(args[1])))
+		if mode != BusyInputModeQueue && mode != BusyInputModeInterrupt && mode != BusyInputModeSteer {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQueueInvalidMode))
+			return
+		}
+		e.SetBusyInputMode(mode)
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueModeSet, mode))
+	case "depth":
+		if len(args) == 1 {
+			maxQueuedMessages := e.maxQueuedMessagesSnapshot()
+			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueDepth, maxQueuedMessages))
+			return
+		}
+		if !e.isAdmin(msg.UserID) {
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgAdminRequired), "/queue"))
+			return
+		}
+		depth, err := strconv.Atoi(args[1])
+		if err != nil || depth <= 0 {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQueueInvalidDepth))
+			return
+		}
+		e.SetMaxQueuedMessages(depth)
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueDepthSet, depth))
+	default:
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQueueUsage))
+	}
 }
 
 func (e *Engine) cmdThread(p Platform, msg *Message, args []string) {
@@ -6099,8 +6248,12 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdCompress(p, msg)
 	case "stop":
 		e.cmdStop(p, msg)
+	case "interrupt":
+		e.cmdInterrupt(p, msg, args)
 	case "cancel":
 		e.cmdCancel(p, msg)
+	case "queue":
+		e.cmdQueue(p, msg, args)
 	case "help":
 		e.cmdHelp(p, msg)
 	case "start":
@@ -6150,6 +6303,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdWeb(p, msg, args)
 	case "ps":
 		e.cmdPs(p, msg, args)
+	case "steer":
+		e.cmdSteer(p, msg, args)
 	case "thread":
 		e.cmdThread(p, msg, args)
 	default:
@@ -8834,6 +8989,8 @@ func helpCardGroups() []helpCardGroup {
 				{command: "/switch", action: "nav:/list"},
 				{command: "/search", action: "cmd:/search"},
 				{command: "/history", action: "nav:/history"},
+				{command: "/thread", action: "cmd:/thread"},
+				{command: "/t", action: "cmd:/t"},
 				{command: "/delete", action: "cmd:/delete"},
 				{command: "/name", action: "cmd:/name"},
 			},
@@ -8867,7 +9024,10 @@ func helpCardGroups() []helpCardGroup {
 				{command: "/skills", action: "nav:/skills"},
 				{command: "/compress", action: "cmd:/compress"},
 				{command: "/stop", action: "act:/stop"},
+				{command: "/interrupt", action: "cmd:/interrupt"},
+				{command: "/queue", action: "cmd:/queue status"},
 				{command: "/ps", action: "cmd:/ps"},
+				{command: "/steer", action: "cmd:/steer"},
 			},
 		},
 		{
