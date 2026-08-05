@@ -118,12 +118,19 @@ func TestConfigValidate(t *testing.T) {
 			},
 		},
 		{
-			name: "rejects invalid busy input mode",
+			name: "accepts steer busy input mode",
 			cfg: Config{
 				Queue:    QueueConfig{BusyInputMode: "steer"},
 				Projects: []ProjectConfig{validProject("demo")},
 			},
-			wantErr: `queue.busy_input_mode must be "queue" or "interrupt"`,
+		},
+		{
+			name: "rejects invalid busy input mode",
+			cfg: Config{
+				Queue:    QueueConfig{BusyInputMode: "drop"},
+				Projects: []ProjectConfig{validProject("demo")},
+			},
+			wantErr: `queue.busy_input_mode must be "queue", "interrupt", or "steer"`,
 		},
 		{
 			name: "accepts valid references config",

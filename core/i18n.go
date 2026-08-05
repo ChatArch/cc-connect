@@ -3499,11 +3499,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "No hay ninguna tarea en ejecución para interrumpir.",
 	},
 	MsgQueueUsage: {
-		LangEnglish:            "Usage: `/queue status`, `/queue mode <queue|interrupt>`, or `/queue depth <n>`",
-		LangChinese:            "用法：`/queue status`、`/queue mode <queue|interrupt>` 或 `/queue depth <n>`",
-		LangTraditionalChinese: "用法：`/queue status`、`/queue mode <queue|interrupt>` 或 `/queue depth <n>`",
-		LangJapanese:           "使い方：`/queue status`、`/queue mode <queue|interrupt>`、または `/queue depth <n>`",
-		LangSpanish:            "Uso: `/queue status`, `/queue mode <queue|interrupt>` o `/queue depth <n>`",
+		LangEnglish:            "Usage: `/queue status`, `/queue mode <queue|interrupt|steer>`, or `/queue depth <n>`",
+		LangChinese:            "用法：`/queue status`、`/queue mode <queue|interrupt|steer>` 或 `/queue depth <n>`",
+		LangTraditionalChinese: "用法：`/queue status`、`/queue mode <queue|interrupt|steer>` 或 `/queue depth <n>`",
+		LangJapanese:           "使い方：`/queue status`、`/queue mode <queue|interrupt|steer>`、または `/queue depth <n>`",
+		LangSpanish:            "Uso: `/queue status`, `/queue mode <queue|interrupt|steer>` o `/queue depth <n>`",
 	},
 	MsgQueueStatus: {
 		LangEnglish:            "📬 Queue status\nMode: %s\nPending: %d\nMax depth: %d",
@@ -3527,11 +3527,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "✅ Modo de cola establecido en `%s`.",
 	},
 	MsgQueueInvalidMode: {
-		LangEnglish:            "Invalid queue mode. Use `queue` or `interrupt`.",
-		LangChinese:            "无效队列模式。请使用 `queue` 或 `interrupt`。",
-		LangTraditionalChinese: "無效佇列模式。請使用 `queue` 或 `interrupt`。",
-		LangJapanese:           "無効なキューモードです。`queue` または `interrupt` を使用してください。",
-		LangSpanish:            "Modo de cola inválido. Use `queue` o `interrupt`.",
+		LangEnglish:            "Invalid queue mode. Use `queue`, `interrupt`, or `steer`.",
+		LangChinese:            "无效队列模式。请使用 `queue`、`interrupt` 或 `steer`。",
+		LangTraditionalChinese: "無效佇列模式。請使用 `queue`、`interrupt` 或 `steer`。",
+		LangJapanese:           "無効なキューモードです。`queue`、`interrupt`、または `steer` を使用してください。",
+		LangSpanish:            "Modo de cola inválido. Use `queue`, `interrupt` o `steer`.",
 	},
 	MsgQueueDepth: {
 		LangEnglish:            "Queue max depth: %d",

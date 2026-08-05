@@ -35,12 +35,15 @@ type BusyInputMode string
 const (
 	BusyInputModeQueue     BusyInputMode = "queue"
 	BusyInputModeInterrupt BusyInputMode = "interrupt"
+	BusyInputModeSteer     BusyInputMode = "steer"
 )
 
 func normalizeBusyInputMode(mode BusyInputMode) BusyInputMode {
 	switch BusyInputMode(strings.ToLower(strings.TrimSpace(string(mode)))) {
 	case BusyInputModeInterrupt:
 		return BusyInputModeInterrupt
+	case BusyInputModeSteer:
+		return BusyInputModeSteer
 	default:
 		return BusyInputModeQueue
 	}
@@ -2773,6 +2776,10 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 					"session", msg.SessionKey, "interactive_key", interactiveKey)
 				return
 			}
+		}
+		if e.busyInputMode == BusyInputModeSteer && strings.TrimSpace(msg.Content) != "" && len(msg.Images) == 0 && len(msg.Files) == 0 {
+			e.sendRunningTaskSupplement(p, msg, []string{msg.Content}, MsgSteerEmpty, MsgSteerSent, MsgSteerSendFailed)
+			return
 		}
 		// Session is busy — try to queue the message for the running turn
 		// so the agent processes it immediately after the current turn ends.
@@ -5974,7 +5981,7 @@ func (e *Engine) cmdQueue(p Platform, msg *Message, args []string) {
 			return
 		}
 		mode := BusyInputMode(strings.ToLower(strings.TrimSpace(args[1])))
-		if mode != BusyInputModeQueue && mode != BusyInputModeInterrupt {
+		if mode != BusyInputModeQueue && mode != BusyInputModeInterrupt && mode != BusyInputModeSteer {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQueueInvalidMode))
 			return
 		}

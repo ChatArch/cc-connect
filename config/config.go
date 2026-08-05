@@ -146,7 +146,7 @@ type CronConfig struct {
 // QueueConfig controls the per-session message queue and busy-message behavior.
 type QueueConfig struct {
 	MaxDepth      *int   `toml:"max_depth"`       // max queued messages per session; default 5
-	BusyInputMode string `toml:"busy_input_mode"` // "queue" (default) or "interrupt"
+	BusyInputMode string `toml:"busy_input_mode"` // "queue" (default), "interrupt", or "steer"
 }
 
 // WebhookConfig controls the external HTTP webhook endpoint.
@@ -982,9 +982,9 @@ func (c *Config) validateInternal(permissive bool) error {
 		return err
 	}
 	switch strings.ToLower(strings.TrimSpace(c.Queue.BusyInputMode)) {
-	case "", "queue", "interrupt":
+	case "", "queue", "interrupt", "steer":
 	default:
-		return fmt.Errorf("config: queue.busy_input_mode must be \"queue\" or \"interrupt\"")
+		return fmt.Errorf("config: queue.busy_input_mode must be \"queue\", \"interrupt\", or \"steer\"")
 	}
 	switch strings.ToLower(strings.TrimSpace(c.AttachmentSend)) {
 	case "", "on", "off":

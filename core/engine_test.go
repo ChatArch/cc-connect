@@ -6982,6 +6982,8 @@ type controllableAgentSession struct {
 	alive           atomic.Bool
 	events          chan Event
 	closed          chan struct{} // closed when Close() is called
+	mu              sync.Mutex
+	sentPrompts     []string
 	model           string
 	reasoningEffort string
 	workDir         string
@@ -7000,8 +7002,19 @@ func newControllableSession(id string) *controllableAgentSession {
 	return s
 }
 
-func (s *controllableAgentSession) Send(_ string, _ []ImageAttachment, _ []FileAttachment) error {
+func (s *controllableAgentSession) Send(prompt string, _ []ImageAttachment, _ []FileAttachment) error {
+	s.mu.Lock()
+	s.sentPrompts = append(s.sentPrompts, prompt)
+	s.mu.Unlock()
 	return nil
+}
+
+func (s *controllableAgentSession) sentPromptSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.sentPrompts))
+	copy(out, s.sentPrompts)
+	return out
 }
 func (s *controllableAgentSession) RespondPermission(_ string, _ PermissionResult) error { return nil }
 func (s *controllableAgentSession) Events() <-chan Event                                 { return s.events }
@@ -9524,6 +9537,67 @@ func TestBusyInputModeInterruptSwitchesProcessingIndicatorToNewMessage(t *testin
 		starts, stops := p.typingSnapshot()
 		return len(starts) >= 2 && starts[0] == "ctx-1" && starts[1] == "ctx-2" && len(stops) >= 1 && stops[0] == "ctx-1"
 	}, "interrupt did not move processing indicator from old message to new message")
+}
+
+func TestBusyInputModeSteerSendsPlainTextToRunningSessionWithoutQueueing(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	running := newControllableSession("running")
+	agent := &controllableAgent{nextSession: running}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetBusyInputMode(BusyInputModeSteer)
+
+	key := "test:steer-user"
+	session := e.sessions.GetOrCreateActive(key)
+	if !session.TryLock() {
+		t.Fatal("expected to lock active session")
+	}
+	defer session.UnlockWithoutUpdate()
+
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{
+		agentSession: running,
+		platform:     p,
+		replyCtx:     "ctx-running",
+	}
+	e.interactiveMu.Unlock()
+
+	e.handleMessage(p, &Message{
+		SessionKey: key,
+		MessageID:  "m2",
+		UserID:     "u1",
+		UserName:   "User",
+		Platform:   "test",
+		Content:    "please steer the current task",
+		ReplyCtx:   "ctx-2",
+	})
+
+	if got := running.sentPromptSnapshot(); len(got) != 1 || got[0] != "please steer the current task" {
+		t.Fatalf("running session prompts = %#v, want one steer prompt", got)
+	}
+
+	e.interactiveMu.Lock()
+	state := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+	state.mu.Lock()
+	queued := len(state.pendingMessages)
+	state.mu.Unlock()
+	if queued != 0 {
+		t.Fatalf("steer mode queued %d messages, want 0", queued)
+	}
+
+	sent := p.getSent()
+	gotSteerAck := false
+	for _, line := range sent {
+		if line == e.i18n.T(MsgSteerSent) {
+			gotSteerAck = true
+		}
+		if strings.Contains(line, e.i18n.T(MsgMessageQueued)) {
+			t.Fatalf("steer mode should not send queued reply, got %v", sent)
+		}
+	}
+	if !gotSteerAck {
+		t.Fatalf("steer mode should send steer ack %q, got %v", e.i18n.T(MsgSteerSent), sent)
+	}
 }
 
 // TestProcessInteractiveMessageWith_NilAgentSession_NoPanic is a regression
