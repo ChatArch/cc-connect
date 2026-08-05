@@ -263,6 +263,7 @@ type Engine struct {
 	relayManager      *RelayManager
 	eventIdleTimeout  time.Duration
 	maxTurnTime       time.Duration // absolute wall-clock cap per turn (0 = disabled)
+	queueConfigMu     sync.RWMutex
 	maxQueuedMessages int
 	busyInputMode     BusyInputMode
 	dirHistory        *DirHistory
@@ -1139,6 +1140,8 @@ func (e *Engine) SetEventIdleTimeout(d time.Duration) {
 // Values <= 0 are ignored.
 func (e *Engine) SetMaxQueuedMessages(n int) {
 	if n > 0 {
+		e.queueConfigMu.Lock()
+		defer e.queueConfigMu.Unlock()
 		e.maxQueuedMessages = n
 	}
 }
@@ -1146,7 +1149,25 @@ func (e *Engine) SetMaxQueuedMessages(n int) {
 // SetBusyInputMode controls how ordinary messages are handled while a turn is busy.
 // The default is queue, preserving existing behavior.
 func (e *Engine) SetBusyInputMode(mode BusyInputMode) {
+	e.queueConfigMu.Lock()
+	defer e.queueConfigMu.Unlock()
 	e.busyInputMode = normalizeBusyInputMode(mode)
+}
+
+func (e *Engine) queueConfigSnapshot() (BusyInputMode, int) {
+	e.queueConfigMu.RLock()
+	defer e.queueConfigMu.RUnlock()
+	return e.busyInputMode, e.maxQueuedMessages
+}
+
+func (e *Engine) busyInputModeSnapshot() BusyInputMode {
+	mode, _ := e.queueConfigSnapshot()
+	return mode
+}
+
+func (e *Engine) maxQueuedMessagesSnapshot() int {
+	_, maxDepth := e.queueConfigSnapshot()
+	return maxDepth
 }
 
 func (e *Engine) SetRelayManager(rm *RelayManager) {
@@ -2766,7 +2787,8 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPreviousProcessing))
 			return
 		}
-		if e.busyInputMode == BusyInputModeInterrupt {
+		busyInputMode := e.busyInputModeSnapshot()
+		if busyInputMode == BusyInputModeInterrupt {
 			if e.interruptBusySession(interactiveKey, session) {
 				e.reply(p, msg.ReplyCtx, e.i18n.T(MsgBusyInterrupted))
 				if e.waitForSessionLock(session, recalledStopLockWait) {
@@ -2777,7 +2799,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 				return
 			}
 		}
-		if e.busyInputMode == BusyInputModeSteer && strings.TrimSpace(msg.Content) != "" && len(msg.Images) == 0 && len(msg.Files) == 0 {
+		if busyInputMode == BusyInputModeSteer && strings.TrimSpace(msg.Content) != "" && len(msg.Images) == 0 && len(msg.Files) == 0 {
 			e.sendRunningTaskSupplement(p, msg, []string{msg.Content}, MsgSteerEmpty, MsgSteerSent, MsgSteerSendFailed)
 			return
 		}
@@ -2915,7 +2937,8 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		e.logStaleUserMessageDropped("reject_before_queue", msg, interactiveKey, snap)
 		return true
 	}
-	if len(state.pendingMessages) >= e.maxQueuedMessages {
+	maxQueuedMessages := e.maxQueuedMessagesSnapshot()
+	if len(state.pendingMessages) >= maxQueuedMessages {
 		depth := len(state.pendingMessages)
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgQueueFull), depth))
 		return true // handled: queue-full reply sent
@@ -5959,7 +5982,8 @@ func (e *Engine) pendingQueueDepth(interactiveKey string) int {
 func (e *Engine) replyQueueStatus(p Platform, msg *Message) {
 	interactiveKey := e.interactiveKeyForSessionKey(msg.SessionKey)
 	pending := e.pendingQueueDepth(interactiveKey)
-	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueStatus, e.busyInputMode, pending, e.maxQueuedMessages))
+	busyInputMode, maxQueuedMessages := e.queueConfigSnapshot()
+	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueStatus, busyInputMode, pending, maxQueuedMessages))
 }
 
 func (e *Engine) cmdQueue(p Platform, msg *Message, args []string) {
@@ -5973,7 +5997,8 @@ func (e *Engine) cmdQueue(p Platform, msg *Message, args []string) {
 		e.replyQueueStatus(p, msg)
 	case "mode":
 		if len(args) == 1 {
-			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueMode, e.busyInputMode))
+			busyInputMode := e.busyInputModeSnapshot()
+			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueMode, busyInputMode))
 			return
 		}
 		if !e.isAdmin(msg.UserID) {
@@ -5986,10 +6011,11 @@ func (e *Engine) cmdQueue(p Platform, msg *Message, args []string) {
 			return
 		}
 		e.SetBusyInputMode(mode)
-		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueModeSet, e.busyInputMode))
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueModeSet, mode))
 	case "depth":
 		if len(args) == 1 {
-			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueDepth, e.maxQueuedMessages))
+			maxQueuedMessages := e.maxQueuedMessagesSnapshot()
+			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueDepth, maxQueuedMessages))
 			return
 		}
 		if !e.isAdmin(msg.UserID) {
@@ -6002,7 +6028,7 @@ func (e *Engine) cmdQueue(p Platform, msg *Message, args []string) {
 			return
 		}
 		e.SetMaxQueuedMessages(depth)
-		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueDepthSet, e.maxQueuedMessages))
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgQueueDepthSet, depth))
 	default:
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQueueUsage))
 	}

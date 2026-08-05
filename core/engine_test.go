@@ -10218,14 +10218,16 @@ func TestHandleCommandQueue_ModeAndDepthUpdateRuntimeSettings(t *testing.T) {
 	if !e.handleCommand(p, msg, "/queue mode interrupt") {
 		t.Fatal("/queue mode should be handled")
 	}
-	if e.busyInputMode != BusyInputModeInterrupt {
-		t.Fatalf("busyInputMode = %q, want interrupt", e.busyInputMode)
+	busyInputMode, _ := e.queueConfigSnapshot()
+	if busyInputMode != BusyInputModeInterrupt {
+		t.Fatalf("busyInputMode = %q, want interrupt", busyInputMode)
 	}
 	if !e.handleCommand(p, msg, "/queue depth 9") {
 		t.Fatal("/queue depth should be handled")
 	}
-	if e.maxQueuedMessages != 9 {
-		t.Fatalf("maxQueuedMessages = %d, want 9", e.maxQueuedMessages)
+	_, maxQueuedMessages := e.queueConfigSnapshot()
+	if maxQueuedMessages != 9 {
+		t.Fatalf("maxQueuedMessages = %d, want 9", maxQueuedMessages)
 	}
 }
 
@@ -10238,12 +10240,46 @@ func TestHandleCommandQueue_ModeAndDepthRequireAdmin(t *testing.T) {
 	if !e.handleCommand(p, msg, "/queue mode interrupt") {
 		t.Fatal("/queue mode should be handled")
 	}
-	if e.busyInputMode != BusyInputModeQueue {
-		t.Fatalf("busyInputMode = %q, want unchanged queue", e.busyInputMode)
+	busyInputMode, _ := e.queueConfigSnapshot()
+	if busyInputMode != BusyInputModeQueue {
+		t.Fatalf("busyInputMode = %q, want unchanged queue", busyInputMode)
 	}
 	if !strings.Contains(strings.Join(p.getSent(), "\n"), "requires admin") {
 		t.Fatalf("expected admin-required reply, got %v", p.getSent())
 	}
+}
+
+func TestQueueRuntimeSettingsAreRaceSafe(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	msg := &Message{SessionKey: "test:user1", UserID: "user1", Content: "/queue status", ReplyCtx: "ctx"}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			modes := []BusyInputMode{BusyInputModeQueue, BusyInputModeInterrupt, BusyInputModeSteer}
+			for j := 0; j < 200; j++ {
+				e.SetBusyInputMode(modes[(i+j)%len(modes)])
+				e.SetMaxQueuedMessages((i+j)%10 + 1)
+			}
+		}(i)
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 200; j++ {
+				e.replyQueueStatus(p, msg)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
 }
 
 func TestHelpSurfacesExposeChatArchTurnControlCommands(t *testing.T) {

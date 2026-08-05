@@ -146,9 +146,11 @@ level = "info" # debug, info, warn, error
 # 忙时普通消息处理方式：当上一轮 agent 任务仍在运行时，新普通消息如何处理。
 # [queue]
 # max_depth = 5                  # max queued messages per session / 每个会话最大排队消息数
-# busy_input_mode = "queue"       # "queue" (default) or "interrupt"
+# busy_input_mode = "queue"       # "queue" (default), "interrupt", or "steer"
 #                                # queue: process after current task finishes / 当前任务结束后再处理
 #                                # interrupt: stop current task and process the new message / 打断当前任务并处理新消息
+#                                # steer: send busy-time text to the running task as a supplement; media still queues
+#                                # steer：忙时普通文本作为补充发送给当前任务；图片/文件仍进入队列
 
 # Auto-reset the active session after the user has been inactive for a while.
 # Unlike idle_timeout_mins, this does not detect stuck agent execution. It
