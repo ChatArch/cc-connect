@@ -684,6 +684,19 @@ level = "info" # debug, info, warn, error
 # [projects.platforms.options]
 # bot_token = "xoxb-..."
 # app_token = "xapp-..."
+#
+# [[projects.platforms]]
+# type = "mattermost"
+# [projects.platforms.options]
+# url = "https://mattermost.example.com"
+# token = "<mattermost-bot-token>"
+# bot_username = "cc-connect"
+# allow_from = "<allowed-user-id>"
+# session_scope = "thread"  # user | channel | thread
+# # Smoke-test only: keep false in normal use; true lets a bot-authored
+# # `@cc-connect /help` test post trigger the local adapter without a
+# # separate human/test-user token.
+# allow_self_messages = false
 
 # =============================================================================
 # Project 1 / 项目 1
