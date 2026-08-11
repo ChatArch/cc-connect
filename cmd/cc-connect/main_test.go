@@ -393,6 +393,14 @@ func TestPrintUsage_ListsTreeFlag(t *testing.T) {
 	}
 }
 
+func TestPrintUsage_ListsMattermostPlatform(t *testing.T) {
+	out := captureStderr(t, printUsage)
+
+	if !strings.Contains(out, "Mattermost") {
+		t.Fatalf("printUsage() output missing Mattermost platform:\n%s", out)
+	}
+}
+
 func TestRenderCLITree_IncludesRegisteredCommandSurface(t *testing.T) {
 	out := renderCLITree()
 
