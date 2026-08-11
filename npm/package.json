@@ -1,13 +1,14 @@
 {
   "name": "@chatarch/cc-connect",
-  "version": "1.0.5",
-  "description": "Bridge local AI coding agents (Claude Code, Cursor, Gemini CLI) to messaging platforms (Feishu, DingTalk, Slack, Telegram, Discord, LINE, WeChat Work)",
+  "version": "1.0.6",
+  "description": "Bridge local AI coding agents (Claude Code, Cursor, Gemini CLI) to messaging platforms (Feishu, DingTalk, Slack, Mattermost, Telegram, Discord, LINE, WeChat Work)",
   "keywords": [
     "claude-code",
     "ai-coding",
     "feishu",
     "dingtalk",
     "slack",
+    "mattermost",
     "telegram",
     "discord",
     "line",
