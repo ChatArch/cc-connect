@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v1.0.5 (2026-08-11)
+
+### Added
+- **CLI tree readback**: add top-level `cc-connect --tree`, rendered from the same runtime command registry that dispatches top-level commands, so operators can inspect the real command surface without starting the daemon.
+
 ## v1.0.4 (2026-08-06)
 
 ### Added

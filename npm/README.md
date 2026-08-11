@@ -18,9 +18,12 @@ npm install -g @chatarch/cc-connect
 # Create config
 cc-connect --version
 
+# Inspect the command tree without starting the daemon
+cc-connect --tree
+
 # Edit config.toml, then run
 cc-connect
-cc-connect -config /path/to/config.toml
+cc-connect --config /path/to/config.toml
 ```
 
 ## Documentation

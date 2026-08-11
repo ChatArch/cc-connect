@@ -316,6 +316,14 @@ When a user runs `/dir reset`, cc-connect restores the configured `work_dir` and
 ./cc-connect
 ```
 
+### 🧭 Inspect the CLI Tree
+
+`cc-connect --tree` prints the registered command tree without starting the daemon. The output is generated from the same runtime command registry that dispatches top-level commands.
+
+```bash
+cc-connect --tree
+```
+
 
 ### 🔄 Upgrade
 

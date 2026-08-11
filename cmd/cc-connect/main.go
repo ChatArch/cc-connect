@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	ccconnect "github.com/chenhg5/cc-connect"
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
 	"github.com/chenhg5/cc-connect/daemon"
@@ -189,58 +188,10 @@ type providerWiringResult struct {
 func main() {
 	checkUpdateAsync()
 
-	// Handle subcommands before flag parsing
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "config-example":
-			fmt.Print(ccconnect.ConfigExampleTOML)
-			return
-		case "config":
-			runConfig(os.Args[2:])
-			return
-		case "update":
-			runUpdate()
-			return
-		case "check-update":
-			checkUpdate()
-			return
-		case "provider":
-			runProviderCommand(os.Args[2:])
-			return
-		case "send":
-			runSend(os.Args[2:])
-			return
-		case "cron":
-			runCron(os.Args[2:])
-			return
-		case "timer", "at":
-			runTimer(os.Args[2:])
-			return
-		case "relay":
-			runRelay(os.Args[2:])
-			return
-		case "sessions":
-			runSessions(os.Args[2:])
-			return
-		case "agent-sid":
-			runAgentSID(os.Args[2:])
-			return
-		case "daemon":
-			runDaemon(os.Args[2:])
-			return
-		case "feishu":
-			runFeishu(os.Args[2:])
-			return
-		case "weixin":
-			runWeixin(os.Args[2:])
-			return
-		case "doctor":
-			runDoctor(os.Args[2:])
-			return
-		case "web":
-			runWeb(os.Args[2:])
-			return
-		}
+	// Handle registered subcommands before flag parsing. The same registry also
+	// backs `--tree`, so dispatch and readback cannot drift independently.
+	if len(os.Args) > 1 && dispatchTopLevelCommand(os.Args[1], os.Args[2:]) {
+		return
 	}
 
 	// When started as a daemon (CC_LOG_FILE set), redirect logs to a rotating file.
@@ -266,6 +217,7 @@ func main() {
 
 	configFlag := flag.String("config", "", "path to config file (default: ./config.toml or ~/.chatarch/cc-connect/config.toml)")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	showTree := flag.Bool("tree", false, "print the registered command tree and exit")
 	observeFlag := flag.Bool("observe", false, "observe native terminal Claude Code sessions and forward to Slack")
 	observeChannel := flag.String("observe-channel", "", "Slack channel ID to forward terminal observations to (requires --observe)")
 	forceFlag := flag.Bool("force", false, "kill any existing instance with the same config before starting")
@@ -290,6 +242,10 @@ func main() {
 
 	if *showVersion {
 		fmt.Printf("cc-connect %s\ncommit:  %s\nbuilt:   %s\n", version, commit, buildTime)
+		return
+	}
+	if *showTree {
+		fmt.Print(renderCLITree())
 		return
 	}
 
@@ -1574,6 +1530,7 @@ Flags:
   --config <path>    Path to config file (default: ./config.toml or ~/.chatarch/cc-connect/config.toml)
   --force            Kill any existing instance with the same config before starting
   --version          Print version and exit
+  --tree             Print the registered command tree
   --help             Show this help message
 
 Commands:
