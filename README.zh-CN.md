@@ -314,6 +314,14 @@ vim ~/.chatarch/cc-connect/config.toml
 ./cc-connect
 ```
 
+### 🧭 查看 CLI 命令树
+
+`cc-connect --tree` 会打印已注册命令树，且不会启动 daemon。该输出来自顶层命令分发使用的同一份运行时命令注册表。
+
+```bash
+cc-connect --tree
+```
+
 
 ### 🔄 升级
 

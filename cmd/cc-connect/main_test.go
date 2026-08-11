@@ -385,6 +385,54 @@ func TestPrintUsage_ListsCronExecCommand(t *testing.T) {
 	}
 }
 
+func TestPrintUsage_ListsTreeFlag(t *testing.T) {
+	out := captureStderr(t, printUsage)
+
+	if !strings.Contains(out, "--tree") {
+		t.Fatalf("printUsage() output missing --tree flag:\n%s", out)
+	}
+}
+
+func TestRenderCLITree_IncludesRegisteredCommandSurface(t *testing.T) {
+	out := renderCLITree()
+
+	for _, want := range []string{
+		"cc-connect  # Bridge messaging platforms to local AI coding agents.",
+		"--help  # Show this help message.",
+		"--version  # Print version and exit.",
+		"--tree  # Print the registered command tree.",
+		"daemon  # Manage cc-connect as a background service.",
+		"install  # Install and start the daemon service.",
+		"cron  # Manage scheduled tasks.",
+		"exec  # Trigger a scheduled task immediately.",
+		"provider  # Manage API providers for projects.",
+		"add  # Add a provider.",
+		"feishu  # Setup Feishu/Lark bot credentials.",
+		"setup  # Smart setup for Feishu/Lark bot credentials.",
+		"config-example  # Deprecated alias for config example.",
+		"timer  # Manage one-shot delayed tasks.",
+		"web  # Start the built-in web management console.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("renderCLITree() missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(strings.ToLower(out), "hello") {
+		t.Fatalf("renderCLITree() leaked template hello command:\n%s", out)
+	}
+}
+
+func TestTopLevelCommandRegistry_ContainsDispatchedCommands(t *testing.T) {
+	for _, name := range []string{
+		"config-example", "config", "update", "check-update", "provider", "send", "cron",
+		"timer", "at", "relay", "sessions", "agent-sid", "daemon", "feishu", "weixin", "doctor", "web",
+	} {
+		if _, ok := lookupTopLevelCommand(name); !ok {
+			t.Fatalf("lookupTopLevelCommand(%q) = false, want true", name)
+		}
+	}
+}
+
 func TestCanonicalCronSubcommand_ManualTriggerAliases(t *testing.T) {
 	for _, sub := range []string{"exec", "run", "trigger"} {
 		if got := canonicalCronSubcommand(sub); got != "exec" {
