@@ -208,21 +208,17 @@ func (c *workerControl) serveHTTP(out http.ResponseWriter, req *http.Request) {
 		http.Error(out, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	var args struct {
-		Project    string `json:"project"`
-		SessionKey string `json:"session_key"`
-		controlArgs
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(out, req.Body, maxControlBytes))
-	if err != nil || strictDecode(body, &args) != nil || !validControl(args.controlArgs) {
+	payload, err := core.DecodeSSHControlRequest(http.MaxBytesReader(out, req.Body, maxControlBytes))
+	args := controlArgs{Action: payload.Action, Backend: payload.Backend, Cwd: payload.Cwd}
+	if err != nil || !validControl(args) {
 		http.Error(out, "invalid SSH request", http.StatusBadRequest)
 		return
 	}
-	if args.Project != "ssh-worker" || args.SessionKey != "remote" {
+	if payload.Project != "ssh-worker" || payload.SessionKey != "remote" {
 		http.Error(out, "foreign conversation", http.StatusForbidden)
 		return
 	}
-	r, err := c.call(req.Context(), args.controlArgs)
+	r, err := c.call(req.Context(), args)
 	if err != nil {
 		http.Error(out, "SSH control request failed", http.StatusBadGateway)
 		return

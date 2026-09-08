@@ -206,6 +206,9 @@ func NewSSHMode(path string, targets []SSHTarget) (*SSHMode, error) {
 	if err := sshCheckStateJSON(json.NewDecoder(bytes.NewReader(data)), 0); err != nil {
 		return nil, errors.New("ssh: invalid state file")
 	}
+	if err := sshValidateStateFields(data); err != nil {
+		return nil, errors.New("ssh: invalid state fields")
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var state sshModeState

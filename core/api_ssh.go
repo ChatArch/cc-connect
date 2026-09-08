@@ -1,8 +1,6 @@
 package core
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -15,20 +13,8 @@ func (s *APIServer) handleSSH(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	var req struct {
-		Project    string `json:"project"`
-		SessionKey string `json:"session_key"`
-		Action     string `json:"action"`
-		Backend    string `json:"backend,omitempty"`
-		Cwd        string `json:"cwd,omitempty"`
-	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		http.Error(w, "invalid SSH request", 400)
-		return
-	}
-	if err := dec.Decode(new(any)); err != io.EOF {
+	req, err := DecodeSSHControlRequest(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
 		http.Error(w, "invalid SSH request", 400)
 		return
 	}
