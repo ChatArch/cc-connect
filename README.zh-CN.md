@@ -222,6 +222,8 @@ MiniMax M3 突破 Coding 与 Agentic AI 前沿，基于 MiniMax Sparse Attention
 
 **聊天切换工作目录** — 使用 `/dir <路径>` 切换下一次会话启动目录（`/cd <路径>` 为兼容别名），并支持 `/dir <序号>` / `/dir -` 快速在历史目录间跳转。
 
+**SSH 执行模式** — `/ssh list/status/test/use/on/off` 按当前会话选择 local/SSH，原生 Agent 的工具真实在目标机器执行。模型自动切换受用户授权约束；`off` 只关闭自动切换，退回本机用 `use local`。详见 [SSH 配置、CLI/API 与能力边界](docs/ssh-mode.md)。
+
 ### 🧠 持久化记忆
 **Agent 记忆** — 在聊天中直接读写 Agent 指令文件 (`/memory`)，无需回到终端。
 

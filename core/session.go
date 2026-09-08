@@ -18,11 +18,13 @@ const ContinueSession = "__continue__"
 
 // Session tracks one conversation between a user and the agent.
 type Session struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name"`
-	AgentSessionID      string         `json:"agent_session_id"`
-	AgentType           string         `json:"agent_type,omitempty"`
-	PastAgentSessionIDs []string       `json:"past_agent_session_ids,omitempty"`
+	AgentScope          string                      `json:"agent_scope,omitempty"`
+	AgentScopes         map[string]NativeAgentState `json:"agent_scopes,omitempty"`
+	ID                  string                      `json:"id"`
+	Name                string                      `json:"name"`
+	AgentSessionID      string                      `json:"agent_session_id"`
+	AgentType           string                      `json:"agent_type,omitempty"`
+	PastAgentSessionIDs []string                    `json:"past_agent_session_ids,omitempty"`
 	// ActiveProvider is the agent provider name that was active when this
 	// session last took a turn. It is restored before --resume so that a
 	// cc-connect process restart does not silently drop a user's
@@ -42,6 +44,32 @@ type Session struct {
 
 	mu   sync.Mutex `json:"-"`
 	busy bool       `json:"-"`
+}
+
+// NativeAgentState partitions downstream resume identity from bridge history.
+// The empty scope is legacy local state, retained on upgrades and remote hops.
+type NativeAgentState struct {
+	ID       string   `json:"id"`
+	Type     string   `json:"type,omitempty"`
+	PastIDs  []string `json:"past_ids,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+}
+
+// SelectAgentScope requires an idle/owned conversation lane. History and the
+// visible session ID stay unchanged while native identity follows backend+cwd.
+func (s *Session) SelectAgentScope(scope string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if scope == s.AgentScope {
+		return
+	}
+	if s.AgentScopes == nil {
+		s.AgentScopes = make(map[string]NativeAgentState)
+	}
+	s.AgentScopes[s.AgentScope] = NativeAgentState{s.AgentSessionID, s.AgentType, append([]string(nil), s.PastAgentSessionIDs...), s.ActiveProvider}
+	next := s.AgentScopes[scope]
+	s.AgentSessionID, s.AgentType, s.PastAgentSessionIDs, s.ActiveProvider = next.ID, next.Type, append([]string(nil), next.PastIDs...), next.Provider
+	s.AgentScope = scope
 }
 
 func (s *Session) TryLock() bool {
@@ -398,6 +426,12 @@ func (sm *SessionManager) SwitchSession(userKey, target string) (*Session, error
 // it becomes the active session. Otherwise a new session is created so the
 // previous session's AgentSessionID is preserved in KnownAgentSessionIDs.
 func (sm *SessionManager) SwitchToAgentSession(userKey, agentSID, agentName, summary string) *Session {
+	return sm.SwitchToAgentSessionInScope(userKey, agentSID, agentName, summary, "")
+}
+
+// SwitchToAgentSessionInScope resolves a native ID only within its execution
+// backend+cwd namespace. The legacy entry point retains local semantics.
+func (sm *SessionManager) SwitchToAgentSessionInScope(userKey, agentSID, agentName, summary, scope string) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -408,8 +442,12 @@ func (sm *SessionManager) SwitchToAgentSession(userKey, agentSID, agentName, sum
 		}
 		s.mu.Lock()
 		aid := s.AgentSessionID
+		if s.AgentScope != scope {
+			aid = s.AgentScopes[scope].ID
+		}
 		s.mu.Unlock()
 		if aid == agentSID {
+			s.SelectAgentScope(scope)
 			sm.activeSession[userKey] = s.ID
 			sm.saveLocked()
 			return s
@@ -417,6 +455,7 @@ func (sm *SessionManager) SwitchToAgentSession(userKey, agentSID, agentName, sum
 	}
 
 	s := sm.createLocked(userKey, summary)
+	s.SelectAgentScope(scope)
 	s.SetAgentInfo(agentSID, agentName, summary)
 	sm.saveLocked()
 	return s
@@ -636,7 +675,16 @@ func (sm *SessionManager) saveLocked() {
 			agentSID = ""
 			s.AgentSessionID = ""
 		}
+		scopes := make(map[string]NativeAgentState, len(s.AgentScopes))
+		for scope, native := range s.AgentScopes {
+			native.PastIDs = append([]string(nil), native.PastIDs...)
+			scopes[scope] = native
+		}
 		snapSessions[id] = &Session{
+			AgentScope:          s.AgentScope,
+			AgentScopes:         scopes,
+			ActiveProvider:      s.ActiveProvider,
+			LastUserActivity:    s.LastUserActivity,
 			ID:                  s.ID,
 			Name:                s.Name,
 			AgentSessionID:      agentSID,
@@ -828,7 +876,7 @@ func (sm *SessionManager) PruneDuplicateSessions(mergeHistory bool) PruneResult 
 	defer sm.mu.Unlock()
 
 	// Group sessions by baseChat
-	chatSessions := make(map[string][]*Session) // baseChat -> sessions
+	chatSessions := make(map[string][]*Session)  // baseChat -> sessions
 	sessionToBaseChat := make(map[string]string) // session.ID -> baseChat
 
 	for userKey, sessionIDs := range sm.userSessions {

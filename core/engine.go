@@ -204,6 +204,13 @@ type RateLimitCfg struct {
 
 // Engine routes messages between platforms and the agent for a single project.
 type Engine struct {
+	sshMu                 sync.Mutex
+	sshMode               *SSHMode
+	sshFactory            func(SSHTarget, string) (Agent, error)
+	sshAgents             map[sshAgentKey]Agent
+	sshPending            map[string]SSHBinding
+	sshRoutes             map[string]sshReplyRoute
+	sshManagers           map[string]*SessionManager
 	name                  string
 	agent                 Agent
 	platforms             []Platform
@@ -358,6 +365,9 @@ type queuedMessage struct {
 
 // interactiveState tracks a running interactive agent session and its permission state.
 type interactiveState struct {
+	sshFresh bool
+	// Original conversation key; interactive map keys may include a workspace.
+	rawSessionKey          string
 	agentSession           AgentSession
 	platform               Platform
 	replyCtx               any
@@ -1238,6 +1248,9 @@ func (e *Engine) ActiveSessionKeys() []string {
 // It finds the platform that owns the session key, reconstructs a reply context,
 // and processes the message as if the user sent it.
 func (e *Engine) ExecuteCronJob(job *CronJob) error {
+	if e.sshRemote(job.SessionKey) {
+		return errors.New(e.i18n.T(MsgSSHUnsupported))
+	}
 	e.hooks.Emit(HookEvent{
 		Event:      HookEventCronTriggered,
 		SessionKey: job.SessionKey,
@@ -1446,6 +1459,9 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 // notification (unless muted), and either runs a shell command or injects a
 // synthetic message into the agent session.
 func (e *Engine) ExecuteTimerJob(job *TimerJob) error {
+	if e.sshRemote(job.SessionKey) {
+		return errors.New(e.i18n.T(MsgSSHUnsupported))
+	}
 	e.hooks.Emit(HookEvent{
 		Event:      HookEventTimerTriggered,
 		SessionKey: job.SessionKey,
@@ -2178,6 +2194,15 @@ func (e *Engine) Stop() error {
 	if err := e.agent.Stop(); err != nil {
 		errs = append(errs, fmt.Errorf("stop agent %s: %w", e.agent.Name(), err))
 	}
+	e.sshMu.Lock()
+	owned := e.sshAgents
+	e.sshAgents = nil
+	e.sshMu.Unlock()
+	for _, agent := range owned {
+		if err := agent.Stop(); err != nil {
+			errs = append(errs, errors.New("stop SSH agent failed"))
+		}
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("engine stop errors: %v", errs)
 	}
@@ -2567,6 +2592,11 @@ func (e *Engine) startMessageRecallMonitor(sessionKey string) context.CancelFunc
 }
 
 func (e *Engine) handleMessage(p Platform, msg *Message) {
+	if e.sshMode != nil {
+		e.sshMu.Lock()
+		e.sshRoutes[msg.SessionKey] = sshReplyRoute{p, msg.ReplyCtx}
+		e.sshMu.Unlock()
+	}
 	if msg.Recalled {
 		e.handleMessageRecall(p, msg)
 		return
@@ -2667,7 +2697,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	var wsAgent Agent
 	var wsSessions *SessionManager
 	var resolvedWorkspace string
-	if e.multiWorkspace {
+	if e.multiWorkspace && !e.sshRemote(msg.SessionKey) && !strings.HasPrefix(content, "/ssh") {
 		channelID := effectiveChannelID(msg)
 		channelKey := effectiveWorkspaceChannelKey(msg)
 		workspace, channelName, err := e.resolveWorkspace(p, channelID)
@@ -2718,6 +2748,18 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		sessions = wsSessions
 		agent = wsAgent
 		interactiveKey = resolvedWorkspace + ":" + msg.SessionKey
+	}
+	if e.sshRemote(msg.SessionKey) {
+		if len(msg.Images) == 0 && strings.HasPrefix(content, "/") && e.handleCommand(p, msg, content) {
+			return
+		}
+		var err error
+		agent, sessions, resolvedWorkspace, err = e.sshContext(msg.SessionKey)
+		if err != nil {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSSHUnavailable))
+			return
+		}
+		interactiveKey = msg.SessionKey
 	}
 
 	if len(msg.Images) == 0 && strings.HasPrefix(content, "/") {
@@ -3469,6 +3511,23 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 		return
 	}
 	defer e.cleanupMessageHandle(p, msg.CleanupHandle)
+	// Re-resolve after locking the lane, closing the pre-lock routing race.
+	if e.sshMode != nil {
+		if e.sshRemote(msg.SessionKey) {
+			var err error
+			agent, _, workspaceDir, err = e.sshContext(msg.SessionKey)
+			if err != nil {
+				e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSSHUnavailable))
+				return
+			}
+			interactiveKey = msg.SessionKey
+			binding, _ := e.sshMode.Binding(msg.SessionKey)
+			session.SelectAgentScope(sshNativeScope(binding))
+		} else {
+			agent, _ = e.localSessionContextForKey(msg.SessionKey)
+			session.SelectAgentScope("")
+		}
+	}
 
 	turnStart := time.Now()
 
@@ -3559,6 +3618,15 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	}
 
 	promptContent := e.buildSenderPrompt(msg.Content, msg.UserID, msg.UserName, msg.Platform, msg.SessionKey, msg.ChannelKey)
+	if e.sshMode != nil && state.sshFresh {
+		var history strings.Builder
+		entries := session.GetHistory(30)
+		for _, entry := range entries[:len(entries)-1] {
+			fmt.Fprintf(&history, "%s: %s\n", entry.Role, entry.Content)
+		}
+		promptContent = "[Previous conversation context]\n" + history.String() + "\n" + promptContent
+		state.sshFresh = false
+	}
 
 	sendStart := time.Now()
 	state.mu.Lock()
@@ -3585,6 +3653,10 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	// processInteractiveEvents observing an empty queue and returning here
 	// (session is still locked, so handleMessage's TryLock fails and routes
 	// the message to queueMessageForBusySession). Drain any such orphans.
+	if e.finishSSHPending(state, session, sessions, msg.SessionKey) {
+		unlocked = true
+		return
+	}
 	if e.drainPendingMessages(state, session, sessions, interactiveKey) {
 		unlocked = true
 	}
@@ -3787,7 +3859,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		if e.dataDir != "" {
 			envVars = append(envVars, "CC_DATA_DIR="+e.dataDir)
 		}
-		if exePath, err := os.Executable(); err == nil {
+		if exePath, err := os.Executable(); err == nil && !e.sshRemote(ccKey) {
 			binDir := filepath.Dir(exePath)
 			if curPath := os.Getenv("PATH"); curPath != "" {
 				envVars = append(envVars, "PATH="+binDir+string(filepath.ListSeparator)+curPath)
@@ -3914,6 +3986,8 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	}
 
 	newState := &interactiveState{
+		sshFresh:         e.sshMode != nil && !isResume,
+		rawSessionKey:    ccKey,
 		agentSession:     agentSession,
 		platform:         p,
 		replyCtx:         replyCtx,
@@ -4483,6 +4557,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		case err := <-pendingSend:
 			pendingSend = nil
 			if err != nil {
+				state.mu.Lock()
+				state.eventsNeedResync = true
+				state.mu.Unlock()
 				slog.Error("failed to send prompt", "error", err, "session_key", sessionKey)
 				sp.discard()
 				if stopTyping != nil {
@@ -5415,6 +5492,26 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 
 			// Auto-compress after finishing a turn, before sending any queued messages.
+			if e.sshHasPending(state.rawSessionKey) {
+				// EventResult may arrive before a blocking Send returns. Do not
+				// close/migrate its process until both halves of the turn finish.
+				if pendingSend != nil {
+					select {
+					case err := <-pendingSend:
+						if err != nil {
+							state.mu.Lock()
+							state.eventsNeedResync = true
+							state.mu.Unlock()
+							e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
+						}
+					case <-e.ctx.Done():
+						state.mu.Lock()
+						state.eventsNeedResync = true
+						state.mu.Unlock()
+					}
+				}
+				return
+			}
 			if triggerAutoCompress {
 				compressor, ok := e.agent.(ContextCompressor)
 				if ok && compressor.CompressCommand() != "" {
@@ -5769,6 +5866,9 @@ func (e *Engine) notifyDroppedQueuedMessages(state *interactiveState, reason err
 // Returns true if the session was unlocked by this call.
 func (e *Engine) drainPendingMessages(state *interactiveState, session *Session, sessions *SessionManager, sessionKey string) bool {
 	for {
+		if e.finishSSHPending(state, session, sessions, state.rawSessionKey) {
+			return true
+		}
 		state.mu.Lock()
 		if len(state.pendingMessages) == 0 {
 			session.Unlock()
@@ -5838,6 +5938,7 @@ var builtinCommands = []struct {
 	names []string
 	id    string
 }{
+	{[]string{"ssh"}, "ssh"},
 	{[]string{"new"}, "new"},
 	{[]string{"list", "sessions"}, "list"},
 	{[]string{"switch"}, "switch"},
@@ -6205,7 +6306,13 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 			"project", e.name, "command", cmdID)
 	}
 
+	if e.sshRemote(msg.SessionKey) && !sshCommandAllowed(cmdID) {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSSHUnsupported))
+		return true
+	}
 	switch cmdID {
+	case "ssh":
+		e.cmdSSH(p, msg, args)
 	case "new":
 		e.cmdNew(p, msg, args)
 	case "list":
@@ -6771,7 +6878,12 @@ func (e *Engine) cmdSwitch(p Platform, msg *Message, args []string) {
 	// original conversation; wiping it makes /history return empty after a
 	// /switch round-trip. When SwitchToAgentSession creates a fresh Session
 	// (no prior match), History is already nil, so preserving is a no-op.
-	_ = sessions.SwitchToAgentSession(msg.SessionKey, matched.ID, agent.Name(), matched.Summary)
+	scope := ""
+	if e.sshMode != nil {
+		binding, _ := e.sshMode.Binding(msg.SessionKey)
+		scope = sshNativeScope(binding)
+	}
+	_ = sessions.SwitchToAgentSessionInScope(msg.SessionKey, matched.ID, agent.Name(), matched.Summary, scope)
 
 	shortID := matched.ID
 	if len(shortID) > 12 {
@@ -7442,6 +7554,10 @@ func appendFinalMetadataToSegment(segment, fullResponse string) string {
 }
 
 func (e *Engine) cmdShow(p Platform, msg *Message, args []string) {
+	if e.sshRemote(msg.SessionKey) {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSSHUnsupported))
+		return
+	}
 	rawRef := strings.TrimSpace(strings.Join(args, " "))
 	if rawRef == "" {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgShowUsage))
@@ -7774,10 +7890,27 @@ func (e *Engine) cmdShell(p Platform, msg *Message, raw string) {
 		workDir, _ = os.Getwd()
 	}
 
+	if e.sshRemote(msg.SessionKey) {
+		go e.sshRun(p, msg, shellCmd, timeout)
+		return
+	}
 	go func() { _ = e.runShellWithProgress(p, msg.ReplyCtx, shellCmd, workDir, timeout, 4000) }()
 }
 
 func (e *Engine) cmdDiff(p Platform, msg *Message, raw string) {
+	if e.sshRemote(msg.SessionKey) {
+		args := splitCommandArgs(raw)
+		if len(args) > 2 || (len(args) == 2 && strings.HasPrefix(args[1], "-")) {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSSHUsage))
+			return
+		}
+		command := "git --no-pager diff"
+		if len(args) == 2 {
+			command += " " + sshQuote(args[1])
+		}
+		go e.sshRun(p, msg, command+" --", 60*time.Second)
+		return
+	}
 	// Parse optional target: /diff [target]
 	diffTarget := ""
 	if strings.HasPrefix(strings.ToLower(raw), "/diff ") {
@@ -8011,6 +8144,10 @@ func (e *Engine) dirApply(agent Agent, sessions *SessionManager, interactiveKey,
 }
 
 func (e *Engine) cmdDir(p Platform, msg *Message, args []string) {
+	if e.sshRemote(msg.SessionKey) {
+		e.cmdSSHDir(p, msg, args)
+		return
+	}
 	agent, sessions, interactiveKey, err := e.commandContext(p, msg)
 	if err != nil {
 		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
@@ -11291,6 +11428,9 @@ func (e *Engine) sendWithCard(p Platform, replyCtx any, card *Card) {
 // handleCardNav is called by platforms that support in-place card updates.
 // It routes nav: and act: prefixed actions to the appropriate render function.
 func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
+	if e.sshRemote(sessionKey) {
+		return e.simpleCard("SSH", "blue", e.i18n.T(MsgSSHUnsupported))
+	}
 	var prefix, body string
 	if i := strings.Index(action, ":"); i >= 0 {
 		prefix = action[:i]
@@ -11422,6 +11562,9 @@ func (e *Engine) handleModelCardAction(args, sessionKey string) *Card {
 // executeCardAction performs the side-effect for act: prefixed actions
 // (e.g. switching model/mode/lang) before the card is re-rendered.
 func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
+	if e.sshRemote(sessionKey) {
+		return
+	}
 	interactiveKey := e.interactiveKeyForSessionKey(sessionKey)
 
 	switch cmd {
@@ -15480,6 +15623,7 @@ func (e *Engine) cmdBindSetup(p Platform, msg *Message) {
 // it is included as sender_name so the agent can identify who sent the message
 // by display name (useful in shared channel sessions with multiple users).
 func (e *Engine) buildSenderPrompt(content, userID, userName, platform, sessionKey, channelKey string) string {
+	content = e.sshModelHint(sessionKey) + content
 	if !e.injectSender || userID == "" {
 		return content
 	}
@@ -15587,6 +15731,10 @@ func (e *Engine) commandContext(p Platform, msg *Message) (Agent, *SessionManage
 // the resolved workspace path for callers that need to forward it to
 // processInteractiveMessageWith (idle reaper bookkeeping, reply footer, etc).
 func (e *Engine) commandContextWithWorkspace(p Platform, msg *Message) (Agent, *SessionManager, string, string, error) {
+	if e.sshRemote(msg.SessionKey) {
+		agent, sessions, cwd, err := e.sshContext(msg.SessionKey)
+		return agent, sessions, msg.SessionKey, cwd, err
+	}
 	if !e.multiWorkspace {
 		return e.agent, e.sessions, msg.SessionKey, "", nil
 	}
@@ -15612,6 +15760,17 @@ func (e *Engine) commandContextWithWorkspace(p Platform, msg *Message) (Agent, *
 // sessionContextForKey resolves the agent and session manager for a sessionKey.
 // It uses existing workspace bindings and falls back to global context if unresolved.
 func (e *Engine) sessionContextForKey(sessionKey string) (Agent, *SessionManager) {
+	if e.sshRemote(sessionKey) {
+		agent, sessions, _, err := e.sshContext(sessionKey)
+		if err != nil {
+			return failedSSHAgent{}, sessions
+		}
+		return agent, sessions
+	}
+	return e.localSessionContextForKey(sessionKey)
+}
+
+func (e *Engine) localSessionContextForKey(sessionKey string) (Agent, *SessionManager) {
 	if !e.multiWorkspace || e.workspaceBindings == nil {
 		return e.agent, e.sessions
 	}
@@ -15659,6 +15818,9 @@ func (e *Engine) workspaceFromLiveState(sessionKey string) string {
 // interactiveKeyForSessionKey returns the interactive state key for a sessionKey.
 // In multi-workspace mode, it prefixes with the bound workspace path when available.
 func (e *Engine) interactiveKeyForSessionKey(sessionKey string) string {
+	if e.sshRemote(sessionKey) {
+		return sessionKey
+	}
 	// Single-workspace fast path: no scan, no binding lookup, no lock.
 	if !e.multiWorkspace || e.workspaceBindings == nil {
 		return sessionKey
@@ -15692,6 +15854,9 @@ func (e *Engine) interactiveKeyForSessionKey(sessionKey string) string {
 //     ID, so step 2 misses. The state map was keyed correctly at processing
 //     time, so we recover the workspace prefix from there.
 func (e *Engine) interactiveKeyForSessionKeyLocked(sessionKey string) string {
+	if e.sshRemote(sessionKey) {
+		return sessionKey
+	}
 	if !e.multiWorkspace || e.workspaceBindings == nil {
 		return sessionKey
 	}

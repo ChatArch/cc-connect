@@ -33,6 +33,16 @@ func rootFlagRegistry() []cliCommand {
 func topLevelCommandRegistry() []cliCommand {
 	return []cliCommand{
 		{
+			Name: "ssh", Summary: "Inspect or request a conversation execution backend.", Run: runSSH,
+			Children: []cliCommand{
+				{Name: "list", Summary: "List configured backends (--offline supported)."},
+				{Name: "status", Summary: "Show conversation backend and auto-switch grants."},
+				{Name: "test", Args: "<backend>", Summary: "Validate configuration without connecting."},
+				{Name: "use", Args: "<backend>", Summary: "Request a switch; user grants still apply."},
+				{Name: "worker", Summary: "Serve one remote native-agent connection over stdio."},
+			},
+		},
+		{
 			Name:    "daemon",
 			Summary: "Manage cc-connect as a background service.",
 			Run:     runDaemon,

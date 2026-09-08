@@ -186,7 +186,11 @@ type providerWiringResult struct {
 }
 
 func main() {
-	checkUpdateAsync()
+	// SSH worker stdout is a protocol stream; even an asynchronous update
+	// check must not touch the target's normal runtime/cache on this path.
+	if len(os.Args) < 2 || os.Args[1] != "ssh" {
+		checkUpdateAsync()
+	}
 
 	// Handle registered subcommands before flag parsing. The same registry also
 	// backs `--tree`, so dispatch and readback cannot drift independently.
@@ -309,6 +313,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	sshTargets, err := config.LoadSSHTargets(cfg.DataDir, cfg.SSH)
+	if err != nil {
+		slog.Error("SSH target registry invalid", "error", err)
+		os.Exit(1)
+	}
+	// Validate every persisted project store before starting any platform.
+	sshModes := make(map[string]*core.SSHMode, len(cfg.Projects))
+	for _, proj := range cfg.Projects {
+		mode, err := core.NewSSHMode(sshModeStatePath(cfg.DataDir, proj.Name), sshTargets)
+		if err != nil {
+			slog.Error("SSH state invalid", "project", proj.Name, "error", err)
+			os.Exit(1)
+		}
+		sshModes[proj.Name] = mode
+	}
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
 	effectiveWorkDirs := make([]string, 0, len(cfg.Projects))
 
@@ -373,6 +392,7 @@ func main() {
 		}
 
 		engine := core.NewEngine(proj.Name, agent, platforms, sessionFile, lang)
+		engine.SetSSHMode(sshModes[proj.Name], makeSSHAgentFactory(proj.Agent.Type))
 		// Wire display settings including show_context_indicator and reply_footer
 		// Global [display] config can be overridden by project-level settings
 		_, _, _, _, _, showCtx, showFooter := config.EffectiveDisplay(cfg, &proj)

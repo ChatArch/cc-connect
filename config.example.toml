@@ -17,6 +17,21 @@
 # Global Settings / 全局设置
 # =============================================================================
 
+# Optional SSH execution targets / 可选 SSH 执行目标
+# See docs/ssh-mode.md. Targets use their own native-agent installation/login.
+# /ssh off only disables automatic switching; /ssh use local returns local.
+# Place these tables after global scalar settings when uncommenting them.
+# [ssh]
+# registry = "/path/to/targets.yaml"  # default: <data_dir>/ssh/targets.yaml
+# [[ssh.targets]]
+# alias = "dev"
+# host = "dev.example.com"  # DNS/IP, not an alias from ~/.ssh/config
+# user = "agent"
+# identity_file = "~/.ssh/agent_key"
+# host_key_policy = "strict"
+# cwd = "~/workspace"
+# worker_command = "~/.local/bin/cc-connect"
+
 # Language for bot messages / 机器人消息语言
 # - "en": English
 # - "zh": 中文

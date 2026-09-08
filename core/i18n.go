@@ -159,6 +159,20 @@ func (i *I18n) SetLang(lang Language) {
 type MsgKey string
 
 const (
+	MsgSSHUsage MsgKey = "ssh_usage"
+	MsgSSHCurrent MsgKey = "ssh_current"
+	MsgSSHPending MsgKey = "ssh_pending"
+	MsgSSHApproval MsgKey = "ssh_approval"
+	MsgSSHBusy MsgKey = "ssh_busy"
+	MsgSSHAuto MsgKey = "ssh_auto"
+	MsgSSHTest MsgKey = "ssh_test"
+	MsgSSHUnavailable MsgKey = "ssh_unavailable"
+	MsgSSHUnsupported MsgKey = "ssh_unsupported"
+	MsgSSHCommandOutput MsgKey = "ssh_command_output"
+	MsgSSHEmptyOutput MsgKey = "ssh_empty_output"
+)
+
+const (
 	MsgStarting                  MsgKey = "starting"
 	MsgThinking                  MsgKey = "thinking"
 	MsgTool                      MsgKey = "tool"
@@ -672,6 +686,50 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	"ssh": {
+		LangEnglish: "SSH backends: list/status/test/use/on/off",
+		LangChinese: "SSH 执行环境：list/status/test/use/on/off",
+		LangTraditionalChinese: "SSH 執行環境：list/status/test/use/on/off",
+		LangJapanese: "SSH 実行環境：list/status/test/use/on/off",
+		LangSpanish: "Entornos SSH: list/status/test/use/on/off",
+	},
+	MsgSSHUsage: {
+		LangEnglish: "SSH: /ssh list | status | test [backend] | use <backend> [cwd] | on/off [backend|all]. Model API: list/status/test/use only.",
+		LangChinese: "SSH：/ssh list | status | test [环境] | use <环境> [目录] | on/off [环境|all]。模型接口仅支持 list/status/test/use。",
+		LangTraditionalChinese: "SSH：/ssh list | status | test [環境] | use <環境> [目錄] | on/off [環境|all]。模型介面僅支援 list/status/test/use。",
+		LangJapanese: "SSH: /ssh list | status | test [環境] | use <環境> [ディレクトリ] | on/off [環境|all]。モデル API は list/status/test/use のみ。",
+		LangSpanish: "SSH: /ssh list | status | test [entorno] | use <entorno> [directorio] | on/off [entorno|all]. API del modelo: solo list/status/test/use.",
+	},
+	MsgSSHCurrent: {
+		LangEnglish: "SSH current backend: %s\nDirectory: %s", LangChinese: "SSH 当前执行环境：%s\n目录：%s", LangTraditionalChinese: "SSH 目前執行環境：%s\n目錄：%s", LangJapanese: "SSH 現在の実行環境：%s\nディレクトリ：%s", LangSpanish: "Entorno SSH actual: %s\nDirectorio: %s",
+	},
+	MsgSSHPending: {
+		LangEnglish: "SSH switch_pending: %s will be selected after this turn ends; the running process has NOT moved.", LangChinese: "SSH switch_pending：本轮结束后切换到 %s；当前进程尚未迁移。", LangTraditionalChinese: "SSH switch_pending：本輪結束後切換到 %s；目前程序尚未遷移。", LangJapanese: "SSH switch_pending：このターンの終了後に %s へ切り替えます。実行中のプロセスは移動していません。", LangSpanish: "SSH switch_pending: se seleccionará %s al terminar este turno; el proceso actual NO se ha movido.",
+	},
+	MsgSSHApproval: {
+		LangEnglish: "SSH approval_required: automatic switching is disabled. A user can authorize this switch by sending: %s", LangChinese: "SSH approval_required：未允许自动切换。用户可发送以下命令批准本次切换：%s", LangTraditionalChinese: "SSH approval_required：未允許自動切換。使用者可傳送以下指令批准本次切換：%s", LangJapanese: "SSH approval_required：自動切替は無効です。ユーザーが次のコマンドで切替を承認できます：%s", LangSpanish: "SSH approval_required: el cambio automático está desactivado. El usuario puede autorizarlo enviando: %s",
+	},
+	MsgSSHBusy: {
+		LangEnglish: "SSH: a turn is running. Send /stop first, then retry the switch.", LangChinese: "SSH：当前有任务运行。请先发送 /stop，再重试切换。", LangTraditionalChinese: "SSH：目前有工作執行中。請先傳送 /stop，再重試切換。", LangJapanese: "SSH：ターンを実行中です。先に /stop を送ってから切替を再試行してください。", LangSpanish: "SSH: hay un turno en curso. Envía /stop primero y vuelve a intentar el cambio.",
+	},
+	MsgSSHAuto: {
+		LangEnglish: "SSH automatic switching for %s: %s (current backend unchanged).", LangChinese: "SSH 自动切换 %s：%s（不改变当前环境）。", LangTraditionalChinese: "SSH 自動切換 %s：%s（不改變目前環境）。", LangJapanese: "SSH 自動切替 %s：%s（現在の環境は変わりません）。", LangSpanish: "Cambio automático SSH para %s: %s (sin cambiar el entorno actual).",
+	},
+	MsgSSHTest: {
+		LangEnglish: "SSH %s: configuration valid. No network connection was attempted.", LangChinese: "SSH %s：配置有效。未尝试网络连接。", LangTraditionalChinese: "SSH %s：設定有效。未嘗試網路連線。", LangJapanese: "SSH %s：設定は有効です。ネットワーク接続は試行していません。", LangSpanish: "SSH %s: configuración válida. No se intentó ninguna conexión de red.",
+	},
+	MsgSSHUnavailable: {
+		LangEnglish: "SSH unavailable: target initialization or execution failed; no local fallback was used.", LangChinese: "SSH 不可用：目标初始化或执行失败；未回退到本地。", LangTraditionalChinese: "SSH 無法使用：目標初始化或執行失敗；未退回本機。", LangJapanese: "SSH を利用できません：初期化または実行に失敗しました。ローカルへの代替実行はありません。", LangSpanish: "SSH no disponible: falló la inicialización o ejecución; no se usó ejecución local alternativa.",
+	},
+	MsgSSHUnsupported: {
+		LangEnglish: "SSH: this gateway-local command or path feature is unavailable remotely. Use remote /shell, or /ssh use local explicitly.", LangChinese: "SSH：远程模式不支持此网关本地命令或路径功能。请使用远程 /shell，或显式 /ssh use local。", LangTraditionalChinese: "SSH：遠端模式不支援此閘道本機指令或路徑功能。請使用遠端 /shell，或明確 /ssh use local。", LangJapanese: "SSH：このゲートウェイのローカル機能はリモートでは使えません。リモート /shell または明示的な /ssh use local を使用してください。", LangSpanish: "SSH: esta función local de la pasarela no está disponible remotamente. Usa /shell remoto o /ssh use local explícitamente.",
+	},
+	MsgSSHCommandOutput: {
+		LangEnglish: "SSH exit=%d\n%s", LangChinese: "SSH 退出码=%d\n%s", LangTraditionalChinese: "SSH 結束碼=%d\n%s", LangJapanese: "SSH 終了コード=%d\n%s", LangSpanish: "SSH código de salida=%d\n%s",
+	},
+	MsgSSHEmptyOutput: {
+		LangEnglish: "No output", LangChinese: "无输出", LangTraditionalChinese: "無輸出", LangJapanese: "出力なし", LangSpanish: "Sin salida",
+	},
 	MsgStarting: {
 		LangEnglish:            "⏳ Processing...",
 		LangChinese:            "⏳ 处理中...",

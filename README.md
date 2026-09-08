@@ -223,6 +223,8 @@ High-level view of what each **built-in platform** can do in cc-connect.
 
 **Directory Switching in Chat** — Change where the next session starts with `/dir <path>` (and `/cd <path>` as a compatibility alias), plus quick history jump via `/dir <number>` / `/dir -`.
 
+**SSH Execution Mode** — `/ssh list/status/test/use/on/off` controls a conversation-scoped local/SSH backend. Native agent tools execute on the selected host; automatic switches require user grants. See [SSH setup, CLI/API and boundaries](docs/ssh-mode.md).
+
 ### 🧠 Persistent Memory
 **Agent Memory** — Read and write agent instruction files (`/memory`) without touching the terminal.
 
